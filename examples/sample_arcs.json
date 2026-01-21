@@ -1,0 +1,27 @@
+[
+  {
+    "id": "ARC_0001",
+    "origin": "NODE_0001",
+    "destination": "NODE_0002",
+    "cost_profile": {
+      "cost_type": "flat",
+      "params": {
+        "variable_coef": 1.2
+      }
+    },
+    "speed_profile": {
+      "default": 60
+    },
+    "windows": [
+      {
+        "start": "2026-01-22T08:00:00Z",
+        "end": "2026-01-22T18:00:00Z"
+      }
+    ],
+    "metadata": {
+      "source": "test",
+      "version": "1.0",
+      "timestamp": "2026-01-21T18:00:00Z"
+    }
+  }
+]

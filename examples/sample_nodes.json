@@ -1,0 +1,26 @@
+[
+  {
+    "id": "NODE_0001",
+    "lat": -34.65,
+    "lon": -58.45,
+    "supply": 10,
+    "priority": 5,
+    "metadata": {
+      "source": "test",
+      "version": "1.0",
+      "timestamp": "2026-01-21T18:00:00Z"
+    }
+  },
+  {
+    "id": "NODE_0002",
+    "lat": -34.66,
+    "lon": -58.46,
+    "supply": 0,
+    "priority": 3,
+    "metadata": {
+      "source": "test",
+      "version": "1.0",
+      "timestamp": "2026-01-21T18:00:00Z"
+    }
+  }
+]
