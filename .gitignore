@@ -16,3 +16,21 @@ venv/
 .pytest_cache/
 dist/
 build/
+
+# Logs
+*.log
+
+# Coverage reports
+htmlcov/
+.coverage
+coverage.xml
+
+# Packaging
+*.egg-info/
+.eggs/
+
+# Jupyter notebooks checkpoints (si usás notebooks)
+.ipynb_checkpoints/
+
+# PyCharm
+.idea/
