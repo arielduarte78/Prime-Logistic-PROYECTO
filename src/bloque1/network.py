@@ -11,21 +11,37 @@ from .validators import NetworkValidator, ValidationResult
 
 logger = logging.getLogger(__name__)
 
-# -----------------------------------------------------------------------------
-# REGISTRO ÚNICO DE VERDAD (INDEXER)
-# -----------------------------------------------------------------------------
+
 class NetworkIndexer:
-    """
-    Mantiene el inventario de entidades cargadas en memoria.
-    Garantiza unicidad de IDs y acceso O(1).
-    Thread-safe para operaciones básicas de registro/consulta.
-    """
     def __init__(self) -> None:
         self._nodes: Dict[str, NodeRecord] = {}
         self._arcs: Dict[str, ArcRecord] = {}
         self._lock = threading.RLock()
 
-    # --- consultas específicas (thread-safe) ---
+    def get_all_node_ids(self) -> Tuple[str, ...]:
+        with self._lock:
+            return tuple(self._nodes.keys())
+
+    def iter_nodes(self) -> Iterable[NodeRecord]:
+        with self._lock:
+            return list(self._nodes.values())
+
+    def iter_arcs(self) -> Iterable[ArcRecord]:
+        with self._lock:
+            return list(self._arcs.values())
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "nodes": {k: v.to_dict() for k, v in self._nodes.items()},
+                "arcs": {k: v.to_dict() for k, v in self._arcs.items()},
+            }
+
+    def clear_indexer(self) -> None:
+        with self._lock:
+            self._nodes.clear()
+            self._arcs.clear()
+
     def exists_node(self, node_id: str) -> bool:
         with self._lock:
             return node_id in self._nodes
@@ -38,7 +54,6 @@ class NetworkIndexer:
         with self._lock:
             return (entity_id in self._nodes) or (entity_id in self._arcs)
 
-    # --- getters ---
     def get_node(self, node_id: str) -> Optional[NodeRecord]:
         with self._lock:
             return self._nodes.get(node_id)
@@ -47,20 +62,16 @@ class NetworkIndexer:
         with self._lock:
             return self._arcs.get(arc_id)
 
-    # --- registro con política de versionado simple ---
     def register_node(self, node: NodeRecord) -> None:
         with self._lock:
             existing = self._nodes.get(node.id)
             if existing:
-                # Manejo seguro de metadata None
                 ev = existing.metadata.version if existing.metadata else None
                 nv = node.metadata.version if node.metadata else None
-
                 if ev is not None and nv is not None and ev == nv:
                     logger.info("Node %s ya registrado con misma versión %s; ignorando", node.id, ev)
                     return
                 logger.warning("Actualizando nodo %s: %s -> %s", node.id, ev, nv)
-
             self._nodes[node.id] = node
             logger.debug("Node registrado: %s", node.id)
 
@@ -70,12 +81,10 @@ class NetworkIndexer:
             if existing:
                 ev = existing.metadata.version if existing.metadata else None
                 nv = arc.metadata.version if arc.metadata else None
-
                 if ev is not None and nv is not None and ev == nv:
                     logger.info("Arc %s ya registrado con misma versión %s; ignorando", arc.id, ev)
                     return
                 logger.warning("Actualizando arco %s: %s -> %s", arc.id, ev, nv)
-
             self._arcs[arc.id] = arc
             logger.debug("Arc registrado: %s", arc.id)
 
@@ -89,41 +98,23 @@ class NetworkIndexer:
         with self._lock:
             return len(self._arcs)
 
-# -----------------------------------------------------------------------------
-# INGESTOR: COORDINA VALIDACIÓN, INSTANCIACIÓN Y REGISTRO
-# -----------------------------------------------------------------------------
-class Ingestor:
-    """
-    Coordina la validación y creación de objetos.
-    Fase 1: Validación Estática (Regex, Tipos).
-    Fase 2: Instanciación (Dataclasses).
-    Fase 3: Registro (Indexer).
-    """
 
+class Ingestor:
     def __init__(self, indexer: NetworkIndexer) -> None:
         self.indexer = indexer
         self._errors_lock = threading.RLock()
-        self.errors: List[Dict[str, Any]] = []
+        self._errors: List[Dict[str, Any]] = []
 
-    # -------------------------
-    # Helpers internos
-    # -------------------------
     def _log_errors(self, result: ValidationResult, context: str) -> None:
-        """
-        Añade errores al acumulador sin mutar el ValidationResult original.
-        """
         for err in result.errors:
             e = copy.deepcopy(err)
             e["context"] = context
             e["timestamp"] = datetime.now(timezone.utc).isoformat()
             with self._errors_lock:
-                self.errors.append(e)
+                self._errors.append(e)
             logger.debug("Validation error logged: %s", e)
 
     def _add_system_error(self, msg: str, code: str, context: Optional[str] = None, include_traceback: bool = False) -> None:
-        """
-        Añade un error de sistema con metadatos homogéneos.
-        """
         definition = ERROR_CATALOG.get(code)
         entry: Dict[str, Any] = {
             "code": code,
@@ -131,86 +122,75 @@ class Ingestor:
             "severity": getattr(definition, "severity", "CRITICAL") if definition else "CRITICAL",
             "context": context,
             "suggested_fix": getattr(definition, "suggested_fix", "") if definition else "",
-            "timestamp": datetime.now(timezone.utc).isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         if include_traceback:
             entry["traceback"] = _traceback.format_exc()
         with self._errors_lock:
-            self.errors.append(entry)
+            self._errors.append(entry)
         logger.error("System error: %s", entry)
 
-    # -------------------------
-    # Carga de nodos
-    # -------------------------
+    def get_errors(self) -> List[Dict[str, Any]]:
+        with self._errors_lock:
+            return list(self._errors)
+
+    def clear_errors(self) -> None:
+        with self._errors_lock:
+            self._errors.clear()
+
     def load_node(self, raw_data: Dict[str, Any]) -> bool:
-        """
-        Intenta cargar un nodo desde un diccionario crudo.
-        Retorna True si fue exitoso, False si hubo errores.
-        """
         if not isinstance(raw_data, dict):
             self._add_system_error("raw_data debe ser dict", "ERR_SYS_001", context="load_node")
             return False
 
         id_val = raw_data.get("id")
         if id_val is None:
-            logger.warning("load_node: id ausente en raw_data")
-        # 1. Validación Estática de ID
+            self._add_system_error("id ausente en raw_data", "ERR_ID_002", context="load_node")
+            return False
+
         id_res = NetworkValidator.validate_id(id_val, kind="NODE")
         if not id_res.ok:
             self._log_errors(id_res, context=f"Node {id_val}")
             return False
 
-        # 2. Validación Estática de Coordenadas
         geo_res = NetworkValidator.validate_coordinate(raw_data.get("lat"), raw_data.get("lon"))
         if not geo_res.ok:
             self._log_errors(geo_res, context=f"Node {id_val}")
             return False
 
-        # 3. Instanciación blindada
         try:
             node = NodeRecord.from_dict(raw_data)
             if node is None:
                 self._add_system_error(f"Node {id_val} instanciado como None", "ERR_MODEL_INIT", context=f"Node {id_val}")
                 return False
-
-            # 4. Registro
             self.indexer.register_node(node)
             logger.info("Node cargado: %s", node.id)
             return True
 
         except PrimeLogisticsError as ple:
-            # errores esperados de validación/modelo
             code = getattr(ple, "error_code", "ERR_MODEL_INIT")
             self._add_system_error(str(ple), code, context=f"Node {id_val}")
             return False
         except Exception as e:
-            # errores inesperados
             self._add_system_error(f"Error instanciando Node {id_val}: {e}", "ERR_MODEL_INIT", context=f"Node {id_val}", include_traceback=True)
             logger.exception("Unexpected error instantiating Node %s", id_val)
             return False
 
-    # -------------------------
-    # Carga de arcos
-    # -------------------------
     def load_arc(self, raw_data: Dict[str, Any]) -> bool:
-        """
-        Carga un arco. Requiere que los nodos origen/destino ya existan.
-        """
         if not isinstance(raw_data, dict):
             self._add_system_error("raw_data debe ser dict", "ERR_SYS_001", context="load_arc")
             return False
 
         id_val = raw_data.get("id")
         if id_val is None:
-            logger.warning("load_arc: id ausente en raw_data")
+            self._add_system_error("id ausente en raw_data", "ERR_ID_002", context="load_arc")
+            return False
 
-        # 1. Validación de ID
         id_res = NetworkValidator.validate_id(id_val, kind="ARC")
         if not id_res.ok:
             self._log_errors(id_res, context=f"Arc {id_val}")
             return False
 
-        # 2. Validación de Referencias (usar exists_node para mayor claridad)
         origin = raw_data.get("origin")
         destination = raw_data.get("destination")
         ref_res = NetworkValidator.validate_arc_references(origin, destination, self.indexer)
@@ -218,7 +198,6 @@ class Ingestor:
             self._log_errors(ref_res, context=f"Arc {id_val}")
             return False
 
-        # 3. Validaciones de Perfiles (Fail Fast)
         if "cost_profile" in raw_data:
             c_res = NetworkValidator.validate_cost_profile(raw_data.get("cost_profile"))
             if not c_res.ok:
@@ -242,13 +221,118 @@ class Ingestor:
                     self._log_errors(w_res, context=f"Arc {id_val} windows[{i}]")
                     return False
 
-        # 4. Instanciación
         try:
             arc = ArcRecord.from_dict(raw_data)
             if arc is None:
                 self._add_system_error(f"Arc {id_val} instanciado como None", "ERR_MODEL_INIT", context=f"Arc {id_val}")
                 return False
+
+            md = getattr(arc, "metadata", None)
+            mode = None
+            station_origin = None
+            station_dest = None
+            cap_val = None
+            cap_unit = None
+
+            if isinstance(md, dict):
+                mode = md.get("mode") or md.get("transport_type") or md.get("transport_mode")
+                cap_val = md.get("capacity", None)
+                cap_unit = md.get("capacity_unit", None)
+            else:
+                extras = getattr(md, "extras", None)
+                if isinstance(extras, dict):
+                    mode = extras.get("mode") or extras.get("transport_type") or extras.get("transport_mode")
+                    cap_val = extras.get("capacity", None)
+                    cap_unit = extras.get("capacity_unit", None)
+                else:
+                    mode = getattr(md, "mode", None)
+                    cap_val = getattr(md, "capacity", None)
+                    cap_unit = getattr(md, "capacity_unit", None)
+
+            origin_node = self.indexer.get_node(origin)
+            dest_node = self.indexer.get_node(destination)
+            if origin_node:
+                try:
+                    o_md = getattr(origin_node, "metadata", None)
+                    if isinstance(o_md, dict):
+                        station_origin = o_md.get("station_type")
+                    else:
+                        o_ex = getattr(o_md, "extras", None)
+                        if isinstance(o_ex, dict):
+                            station_origin = o_ex.get("station_type")
+                        else:
+                            station_origin = getattr(o_md, "station_type", None)
+                except Exception:
+                    station_origin = None
+            if dest_node:
+                try:
+                    d_md = getattr(dest_node, "metadata", None)
+                    if isinstance(d_md, dict):
+                        station_dest = d_md.get("station_type")
+                    else:
+                        d_ex = getattr(d_md, "extras", None)
+                        if isinstance(d_ex, dict):
+                            station_dest = d_ex.get("station_type")
+                        else:
+                            station_dest = getattr(d_md, "station_type", None)
+                except Exception:
+                    station_dest = None
+
+            if mode:
+                from .config import MODE_ALLOWED_STATION_TYPES
+                mode_key = str(mode).strip().lower()
+                allowed = MODE_ALLOWED_STATION_TYPES.get(mode_key, MODE_ALLOWED_STATION_TYPES.get("default", ()))
+                def _is_allowed(st):
+                    if st is None:
+                        return False
+                    return str(st).strip().lower() in {a.lower() for a in allowed}
+                if not _is_allowed(station_origin) or not _is_allowed(station_dest):
+                    self._add_system_error(
+                        f"Arc {id_val} modo '{mode}' incompatible con estaciones: origin='{station_origin}' dest='{station_dest}'",
+                        "ERR_MODE_STATION_INCOMPAT",
+                        context=f"Arc {id_val}"
+                    )
+                    return False
+
+            if cap_val is not None:
+                try:
+                    cap_f = float(cap_val)
+                except Exception:
+                    self._add_system_error(f"Arc {id_val} capacity inválida: {cap_val}", "ERR_CAP_INVALID", context=f"Arc {id_val}")
+                    return False
+
+                if cap_f < 0:
+                    self._add_system_error(f"Arc {id_val} tiene capacity negativa: {cap_f}", "ERR_CAP_NEG", context=f"Arc {id_val}")
+                    return False
+
+                from .config import MAX_CAPACITY
+                if cap_f > MAX_CAPACITY:
+                    self._add_system_error(
+                        f"Arc {id_val} capacity {cap_f} excede MAX_CAPACITY global {MAX_CAPACITY}",
+                        "ERR_CAP_TOO_LARGE",
+                        context=f"Arc {id_val}"
+                    )
+                    return False
+
             self.indexer.register_arc(arc)
+
+            if cap_val is not None and mode:
+                try:
+                    cap_f = float(cap_val)
+                    from .config import MODE_MAX_CAPACITY, UNIT_CONVERSIONS_TO_TON
+                    if cap_unit:
+                        conv = UNIT_CONVERSIONS_TO_TON.get(str(cap_unit).lower())
+                        if conv is not None:
+                            cap_f = cap_f * float(conv)
+                    mode_key = str(mode).strip().lower()
+                    threshold = MODE_MAX_CAPACITY.get(mode_key, MODE_MAX_CAPACITY.get("default"))
+                    if cap_f > threshold:
+                        msg = f"Arc {id_val} capacity {cap_f} t excede umbral por modo {mode_key} ({threshold} t); se clampa en export_matrices"
+                        self._add_system_error(msg, "WARN_CAP_EXCEEDS_MODE", context=f"Arc {id_val}")
+                        logger.warning(msg)
+                except Exception:
+                    pass
+
             logger.info("Arc cargado: %s", arc.id)
             return True
 
@@ -261,51 +345,38 @@ class Ingestor:
             logger.exception("Unexpected error instantiating Arc %s", id_val)
             return False
 
-    # -------------------------
-    # Batch loaders
-    # -------------------------
-    def load_nodes(self, rows: Iterable[Dict[str, Any]]) -> Tuple[int, int]:
-        """
-        Procesa múltiples filas de nodos. Devuelve (success_count, failed_count).
-        """
+    def load_nodes(self, rows: Iterable[Dict[str, Any]]) -> Tuple[int, int, List[Dict[str, Any]]]:
         success = 0
         failed = 0
+        failed_rows: List[Dict[str, Any]] = []
         for row in rows:
             if self.load_node(row):
                 success += 1
             else:
                 failed += 1
+                failed_rows.append(row)
         logger.info("Batch nodes processed: success=%d failed=%d", success, failed)
-        return success, failed
+        return success, failed, failed_rows
 
-    def load_arcs(self, rows: Iterable[Dict[str, Any]]) -> Tuple[int, int]:
-        """
-        Procesa múltiples filas de arcos. Devuelve (success_count, failed_count).
-        """
+    def load_arcs(self, rows: Iterable[Dict[str, Any]]) -> Tuple[int, int, List[Dict[str, Any]]]:
         success = 0
         failed = 0
+        failed_rows: List[Dict[str, Any]] = []
         for row in rows:
             if self.load_arc(row):
                 success += 1
             else:
                 failed += 1
+                failed_rows.append(row)
         logger.info("Batch arcs processed: success=%d failed=%d", success, failed)
-        return success, failed
+        return success, failed, failed_rows
 
-    # -------------------------
-    # Reportes y utilidades
-    # -------------------------
     def get_validation_report(self) -> Dict[str, Any]:
         with self._errors_lock:
             return {
                 "node_count": self.indexer.node_count,
                 "arc_count": self.indexer.arc_count,
-                "errors": list(self.errors),
-                "error_count": len(self.errors),
-                "generated_at": datetime.now(timezone.utc).isoformat()
+                "errors": list(self._errors),
+                "error_count": len(self._errors),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
             }
-
-    def clear_errors(self) -> None:
-        with self._errors_lock:
-            self.errors.clear()
-
