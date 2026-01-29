@@ -84,7 +84,7 @@ meta = package["meta"]
 - Unidades:  
   - Distancias en km  
   - Tiempos en horas  
-  - Costos en moneda por unidad (documentar la moneda en tu entorno)  
+  - Costos en dolares
   - Capacidades en toneladas (se normalizan automáticamente según `capacity_unit`)  
   - Demanda en unidades  
 - Valores especiales: `np.inf` en C/T/K indica ruta no disponible o sin límite; A es binaria (`np.bool_`) o `csr_matrix` si `sparse=True`.  
@@ -92,7 +92,6 @@ meta = package["meta"]
 - Compatibilidad estación ↔ modo**: validada en `Ingestor`. Ejemplo: `air` solo ↔ `airport`, `ship` ↔ `port`, etc.  
 - Extensiones recomendadas: añadir `fixed_cost` en `ArcRecord`, validar unidades en `SpeedProfile`, y usar salida dispersa para redes grandes.
 
----
 
 ## Contribuir
 
