@@ -218,10 +218,13 @@ class ArcRecord(SerializableMixin):
     origin: str
     destination: str
     active: bool = True
+    capacity: float = 10000.0
     cost_profile: Optional[CostProfile] = None
     speed_profile: Optional[SpeedProfile] = None
     windows: List[Window] = field(default_factory=list)
     metadata: Optional[Metadata] = None
+
+    
 
     def __post_init__(self):
         if self.origin == self.destination:
