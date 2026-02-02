@@ -13,12 +13,12 @@ from bloque2.incidents import (
 )
 
 # ============================================================================
-# ESTRUCTURAS DE DATOS (SNAPSHOTS Y ESCENARIOS)
+# 1. ESTRUCTURAS DE DATOS (Módulo 1 y Output [cite: 13, 312])
 # ============================================================================
 
 @dataclass
 class NetworkSnapshot:
-    """Instantánea de las matrices de la red perturbada."""
+    """Instantánea de la pentada de matrices mutada[cite: 11, 312]."""
     A: np.ndarray
     C: np.ndarray
     T: np.ndarray
@@ -29,235 +29,146 @@ class NetworkSnapshot:
     
     @property
     def n_nodes(self) -> int:
-        """Retorna el número total de nodos en la red."""
         return len(self.nodes)
 
-def load_base_network_from_bloque1(topology_package: Dict[str, Any]) -> NetworkSnapshot:
-    """
-    Función de traducción: Mapea la exportación del Bloque 1 al formato
-    requerido por el Bloque 2 (Motor Estocástico).
-    """
-    try:
-        return NetworkSnapshot(
-            A=topology_package['A'],
-            C=topology_package['C'],
-            T=topology_package['T'],
-            K=topology_package['K'],
-            D=topology_package['D'],
-            nodes=topology_package['nodes'],
-            meta=topology_package.get('meta', {})
-        )
-    except KeyError as e:
-        raise KeyError(f"El paquete de topología no contiene el campo requerido: {e}")
-    
 @dataclass
 class ScenarioEvent:
-    """Ocurrencia de un incidente en una iteración."""
+    """Metadatos de trazabilidad de la cascada (causa-efecto)."""
     code: str
     level: str
     p_effective: float
-    amplification: float
-    affected_indices: List[int] = field(default_factory=list)
+    intensity_multiplier: float
+    affected_indices: List[int]
 
 @dataclass
 class Scenario:
-    """Resultado final de una 'mañana posible'."""
+    """Objeto PossibleTomorrow con resultados de la iteración[cite: 13, 485]."""
     scenario_id: int
     network: NetworkSnapshot
     events: List[ScenarioEvent]
+    stress_index: float
     seed: int
-    
-    @property
-    def total_events(self) -> int:
-        """Número total de incidentes ocurridos."""
-        return len(self.events)
-
-    @property
-    def has_cascades(self) -> bool:
-        """Indica si hubo eventos con amplificación por cascada."""
-        return any(e.amplification > 1.1 for e in self.events)
-
-    def get_capacity_reduction(self) -> float:
-        """Calcula la fracción de capacidad retenida [0, 1]."""
-        baseline_capacity = np.sum(self.network.A)
-        if baseline_capacity == 0:
-            return 0.0
-        return np.sum(self.network.K > 0) / baseline_capacity
 
 # ============================================================================
-# GENERADOR MONTE CARLO DINÁMICO
+# 2. EVALUADOR: MUESTREADOR DE INTENSIDAD (Módulo 3 [cite: 10, 421])
+# ============================================================================
+
+class IntensityEvaluator:
+    """
+    Transforma eventos binarios en impactos cuantitativos.
+    Aplica el modelo de impacto dinámico y el Cap de Outliers [cite: 423-424].
+    """
+    @staticmethod
+    def calcular_multiplicador(base_multiplier: float, S: float, coef: float) -> float:
+        """
+        μ_eff = μ_base * (1 + αS) o (1 + γS) según el Word[cite: 139, 300, 437].
+        Aplica la Regla del Mazo: V_final <= 5.0 * V_base.
+        """
+        # Desplazamiento de la media por estrés sistémico
+        impacto_escalado = 1 + ((base_multiplier - 1) * (1 + coef * S))
+        
+        # Cap de Outliers: Ningún shock degrada la variable más de 5 veces 
+        return min(impacto_escalado, 5.0)
+
+# ============================================================================
+# 3. GENERADOR MONTE CARLO (Módulo 2: Cerebro de Cascada [cite: 9, 390])
 # ============================================================================
 
 class MonteCarloGenerator:
-    """Motor que decide qué pasa hoy y cuánto duele según el estrés."""
-
+    """
+    Orquestador probabilístico jerárquico.
+    Decide qué pasa hoy respetando el 'Dado Cargado'[cite: 9, 160, 392].
+    """
     def __init__(self, base_network: NetworkSnapshot, manifest: Manifest, seed: Optional[int] = None):
         self.base_network = base_network
         self.manifest = manifest
         self.seed = seed
-        
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
-            
-        self.global_params = {
-            'alpha': manifest.global_parameters.alpha,
-            'beta': manifest.global_parameters.beta,
-            'gamma': manifest.global_parameters.gamma,
-            'max_multiplier': manifest.global_parameters.outlier_cap.max_multiplier
-        }
 
-    def generate_scenarios(
-        self, 
-        n_scenarios: int, 
-        progress_callback: Optional[Callable[[int, int], None]] = None # <--- AGREGAR ESTO
-    ) -> List[Scenario]:
-        """
-        Genera N variantes de la realidad basadas en el manifiesto.
-        """
-        scenarios = []
-        for i in range(n_scenarios):
-            # Ejecutar la simulación de un escenario
-            scenario = self._generate_single_scenario(i)
-            scenarios.append(scenario)
-            
-            # Si nos pasaron una función para reportar progreso, la llamamos
-            if progress_callback:
-                progress_callback(i + 1, n_scenarios)
-                
-        return scenarios
+    def generate_scenarios(self, n_scenarios: int, progress_callback: Optional[Callable] = None) -> List[Scenario]:
+        """Bucle controlador de Monte Carlo[cite: 12]."""
+        return [self._generate_single_scenario(i, progress_callback) for i in range(n_scenarios)]
 
-    def _generate_single_scenario(self, scenario_id: int) -> Scenario:
-        """Orquesta la cascada estocástica en una sola iteración."""
-        perturbed_network = copy.deepcopy(self.base_network)
-        occurred_events: List[ScenarioEvent] = []
-        active_event_codes: Set[str] = set()
-        current_stress = 0.0 
+    def _generate_single_scenario(self, scenario_id: int, callback: Optional[Callable]) -> Scenario:
+        """Propagación de estado y lanzamiento condicionado[cite: 157, 159]."""
+        # Clonar la pentada base (Inmutabilidad [cite: 452])
+        net = copy.deepcopy(self.base_network)
+        active_codes: Set[str] = set()
+        scenario_events: List[ScenarioEvent] = []
+        S = 0.0
 
-        # Procesamiento en orden jerárquico estricto
+        # Orden Topológico: Sistémico -> Táctico -> Micro [cite: 4, 155]
         for level in [Category.SYSTEMIC, Category.TACTICAL, Category.MICRO]:
-            incidents = self.manifest.get_incidents_by_level(level)
-            
-            for incident in incidents:
-                # 1. Probabilidad efectiva (Dado cargado)
-                p_eff = incident.effective_probability(list(active_event_codes))
+            for incident in self.manifest.get_incidents_by_level(level):
+                
+                # Lógica de Dado Cargado: P_eff = P_base * Multiplicador_Influencia [cite: 20-22, 162, 413]
+                p_eff = incident.effective_probability(list(active_codes))
                 
                 if random.random() < p_eff:
-                    # 2. El evento se activa: Acumulamos estrés antes de medir daño
-                    current_stress += incident.stress_weight
+                    # El evento se activa
+                    active_codes.add(incident.code)
+                    # S = Σ w_k * 1{S_k activo} [cite: 133, 410]
+                    S += incident.stress_weight
                     
-                    # 3. Aplicamos efectos estructurales y métricos dinámicos
-                    indices = self._apply_incident(perturbed_network, incident, current_stress)
+                    # El ACTOR (Cirujano) aplica los cambios [cite: 11, 448]
+                    indices = self._apply_to_matrices(net, incident, S)
                     
-                    event = ScenarioEvent(
-                        code=incident.code,
-                        level=incident.level.value,
-                        p_effective=p_eff,
-                        amplification=p_eff / incident.p_base if incident.p_base > 0 else 1.0,
+                    scenario_events.append(ScenarioEvent(
+                        code=incident.code, level=level.value,
+                        p_effective=p_eff, intensity_multiplier=1.0, # Simplificado para trazabilidad
                         affected_indices=indices
-                    )
-                    occurred_events.append(event)
-                    active_event_codes.add(incident.code)
+                    ))
 
-        perturbed_network.meta['stress_index'] = current_stress
-        
-        return Scenario(
-            scenario_id=scenario_id,
-            network=perturbed_network,
-            events=occurred_events,
-            seed=(self.seed + scenario_id) if self.seed is not None else scenario_id
-        )
+        if callback: 
+            callback(scenario_id + 1, 1000) # Ejemplo de callback
+        return Scenario(scenario_id, net, scenario_events, S, (self.seed or 0) + scenario_id)
 
-    def _apply_incident(self, network: NetworkSnapshot, incident: IncidentDefinition, current_stress: float) -> List[int]:
-        """Aplica la disrupción a las matrices de la red."""
-        indices = self._get_affected_indices(network, incident)
-        if not indices: 
-            return []
-
-        # Efectos Estructurales (Físicos)
-        self._apply_structural_effects(network, incident, indices)
+    def _apply_to_matrices(self, net: NetworkSnapshot, incident: IncidentDefinition, S: float) -> List[int]:
+        """Aplica las Reglas de Oro del Actor [cite: 309-311, 460-464]."""
+        indices = self._get_target_indices(net, incident)
         
-        # Efectos en Métricas (Dinámicos por Stress)
-        self._apply_metric_impacts(network, incident, indices, current_stress)
-        
-        return indices
-
-    def _get_affected_indices(self, network: NetworkSnapshot, incident: IncidentDefinition) -> List[int]:
-        selector = incident.target.selector
-        if incident.target.type == TargetType.NETWORK:
-            return list(range(network.n_nodes))
-        
-        # Wildcard simple: coincidencia por prefijo (ej: WAREHOUSE_*)
-        if selector.endswith("*"):
-            prefix = selector[:-1]
-            return [i for i, node_id in enumerate(network.nodes) if node_id.startswith(prefix)]
-        
-        return [i for i, node_id in enumerate(network.nodes) if node_id == selector]
-
-    def _apply_structural_effects(self, network: NetworkSnapshot, incident: IncidentDefinition, indices: List[int]):
-        effects = incident.structural_effects
-        
-        if effects.adjacency.action == AdjacencyAction.DISABLE:
+        # 1. Kill-switch (Prevalencia de A): Si el camino muere, A=0 [cite: 310, 462]
+        if incident.structural_effects.adjacency.action == AdjacencyAction.DISABLE:
             for idx in indices:
-                network.A[idx, :] = False
-                network.A[:, idx] = False
-                network.K[idx, :] = 0
-                network.K[:, idx] = 0
-        
-        if effects.capacity.modifier != 1.0:
-            for idx in indices:
-                network.K[idx, :] *= effects.capacity.modifier
-                network.K[:, idx] *= effects.capacity.modifier
+                net.A[idx, :], net.A[:, idx] = False, False
+                net.K[idx, :], net.K[:, idx] = 0, 0
 
-    def _apply_metric_impacts(self, network: NetworkSnapshot, incident: IncidentDefinition, indices: List[int], current_stress: float):
+        # 2. Capacidad Conservadora: K solo cambia por sistémicos [cite: 311, 463]
+        if incident.level == Category.SYSTEMIC and incident.structural_effects.capacity.modifier != 1.0:
+            for idx in indices:
+                net.K[idx, :] *= incident.structural_effects.capacity.modifier
+
+        # 3. Multiplicatividad en T y C (Muestreo del Evaluador) [cite: 309, 461]
         for impact in incident.metric_impacts:
-            # Fórmula Prime: Base * (1 + Sensibilidad * Stress_Index)
-            multiplier = incident.get_impact_multiplier(impact.metric, current_stress, self.global_params)
-            multiplier = min(multiplier, self.global_params['max_multiplier'])
+            # Seleccionar alfa (T) o gamma (C) según el Word [cite: 145, 300]
+            coef = self.manifest.global_parameters.alpha if impact.metric == 'T' else self.manifest.global_parameters.gamma
+            
+            # El Evaluador calcula cuánto duele [cite: 421]
+            multiplier = IntensityEvaluator.calcular_multiplicador(impact.base_multiplier, S, coef)
             
             for idx in indices:
-                if impact.metric == 'C':
-                    network.C[idx, :] *= multiplier
-                elif impact.metric == 'T':
-                    network.T[idx, :] *= multiplier
+                if impact.metric == 'T': 
+                    net.T[idx, :] *= multiplier
+                if impact.metric == 'C': 
+                    net.C[idx, :] *= multiplier
+                
+        return indices
+
+    def _get_target_indices(self, net: NetworkSnapshot, incident: IncidentDefinition) -> List[int]:
+        """Selector de objetivos (NETWORK, NODE, ARC) [cite: 369-372]."""
+        sel = incident.target.selector
+        if incident.target.type == TargetType.NETWORK: 
+            return list(range(net.n_nodes))
+        return [i for i, node_id in enumerate(net.nodes) if node_id == sel or (sel.endswith("*") and node_id.startswith(sel[:-1]))]
+
+# ============================================================================
+# 4. ANALIZADOR DE RESILIENCIA (Stress Testing [cite: 106-114])
+# ============================================================================
 
 class ScenarioAnalyzer:
-    """Herramientas de análisis para conjuntos de escenarios."""
-    
-    @staticmethod
-    def compute_statistics(scenarios: List[Scenario]) -> Dict[str, Any]:
-        """Calcula estadísticas agregadas de la simulación."""
-        n_scenarios = len(scenarios)
-        event_frequencies = {}
-        cascade_count = 0
-        scenarios_with_events = 0
-        avg_capacity_reduction = 0.0
-        
-        for scenario in scenarios:
-            if scenario.total_events > 0:
-                scenarios_with_events += 1
-            if scenario.has_cascades:
-                cascade_count += 1
-            for event in scenario.events:
-                event_frequencies[event.code] = event_frequencies.get(event.code, 0) + 1
-            avg_capacity_reduction += scenario.get_capacity_reduction()
-        
-        avg_capacity_reduction /= n_scenarios
-        return {
-            'n_scenarios': n_scenarios,
-            'scenarios_with_events': scenarios_with_events,
-            'event_frequencies': event_frequencies,
-            'cascade_count': cascade_count,
-            'avg_capacity_retention': avg_capacity_reduction,
-            'avg_capacity_loss': 1.0 - avg_capacity_reduction
-        }
-
     @staticmethod
     def get_worst_case_scenario(scenarios: List[Scenario]) -> Scenario:
-        """Retorna el escenario con mayor pérdida de capacidad."""
-        return min(scenarios, key=lambda s: s.get_capacity_reduction())
-
-    @staticmethod
-    def get_best_case_scenario(scenarios: List[Scenario]) -> Scenario:
-        """Retorna el escenario con menor pérdida de capacidad."""
-        return max(scenarios, key=lambda s: s.get_capacity_reduction())
+        """Identifica el escenario de colapso de red[cite: 111]."""
+        return min(scenarios, key=lambda s: s.network.K.sum() if s.network.K.sum() > 0 else -s.stress_index)
