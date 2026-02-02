@@ -1,0 +1,236 @@
+meta:
+  schema_version: "1.0"
+  description: "Manifiesto de eventos de riesgo logístico para Argentina"
+  modeling_philosophy: >
+    Priors conservadores con sensibilidad calibrada.
+    Stress testing y recalibración futura.
+    Dependencias evaluadas en orden topológico.
+    Impactos combinados multiplicativamente.
+  geographic_context: "Argentina"
+
+global_parameters:
+  stress_index: baseline
+  alpha: 0.15
+  beta: 0.35
+  gamma: 0.25
+  severity_weights_range: [0.5, 2.0]
+  outlier_cap:
+    type: hard
+    max_multiplier: 5.0
+  convergence:
+    window_iterations: 100
+    epsilon: 1e-6
+  impact_combination_rules:
+    - multiplicativity
+    - adjacency_precedence
+    - capacity_preservation
+
+event_levels:
+  SYSTEMIC:
+    description: "Eventos de alcance nacional o regional"
+    frequency_profile: "very_low"
+    typical_impact_scope: "global"
+    allowed_target_types: [NETWORK, ZONE, ARC, NODE]
+  TACTICAL:
+    description: "Eventos zonales o sectoriales"
+    frequency_profile: "low"
+    typical_impact_scope: "regional"
+    allowed_target_types: [NODE, ARC, ZONE]
+  MICRO:
+    description: "Eventos operativos cotidianos"
+    frequency_profile: "medium"
+    typical_impact_scope: "local"
+    allowed_target_types: [UNIT, NODE, ARC]
+
+
+events:
+
+  # ===== SYSTEMIC =====
+
+  - code: INUNDACION_REGIONAL
+    level: SYSTEMIC
+    description: "Inundación regional"
+    p_base: 0.002
+    distribution: { type: EVT, parameters: {} }
+    stress_weight: 1.3
+    conditioners: []
+    target: { type: ZONE, selector: "REGION_*" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.7 }
+      demand: { modifier: 1.2 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.5
+        stress_scaling: gamma
+
+  - code: PARO_NACIONAL_TRANSPORTE
+    level: SYSTEMIC
+    description: "Paro nacional de transporte"
+    p_base: 0.001
+    distribution: { type: EVT, parameters: {} }
+    stress_weight: 1.5
+    conditioners: []
+    target: { type: NETWORK, selector: "ALL" }
+    structural_effects:
+      adjacency: { action: DISABLE }
+      capacity: { modifier: 0.0 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: C
+        base_multiplier: 1.0
+        stress_scaling: alpha
+
+  - code: CRISIS_COMBUSTIBLE
+    level: SYSTEMIC
+    description: "Crisis de combustible"
+    p_base: 0.003
+    distribution: { type: EVT, parameters: {} }
+    stress_weight: 1.4
+    conditioners: []
+    target: { type: NETWORK, selector: "ALL" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.8 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: C
+        base_multiplier: 2.0
+        stress_scaling: beta
+      - metric: T
+        base_multiplier: 1.2
+        stress_scaling: gamma
+
+  - code: OLA_CALOR_EXTREMA
+    level: SYSTEMIC
+    description: "Ola de calor extrema"
+    p_base: 0.01
+    distribution: { type: EVT, parameters: {} }
+    stress_weight: 1.2
+    conditioners: []
+    target: { type: NETWORK, selector: "ALL" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.9 }
+      demand: { modifier: 1.05 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.1
+        stress_scaling: gamma
+
+  # ===== TACTICAL =====
+
+  - code: HUELGA_ALMACEN
+    level: TACTICAL
+    description: "Huelga localizada en almacén"
+    p_base: 0.01
+    distribution: { type: LOGNORMAL, parameters: {} }
+    stress_weight: 1.1
+    conditioners:
+      - event: PARO_NACIONAL_TRANSPORTE
+        multiplier: 8.0
+        scope: probability
+    target: { type: NODE, selector: "WAREHOUSE_*" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.5 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.3
+        stress_scaling: gamma
+
+  - code: BLOQUEO_RUTA
+    level: TACTICAL
+    description: "Bloqueo de ruta"
+    p_base: 0.02
+    distribution: { type: LOGNORMAL, parameters: {} }
+    stress_weight: 1.2
+    conditioners:
+      - event: INUNDACION_REGIONAL
+        multiplier: 4.0
+        scope: impact
+    target: { type: ARC, selector: "ROAD_*" }
+    structural_effects:
+      adjacency: { action: DISABLE }
+      capacity: { modifier: 0.0 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 2.0
+        stress_scaling: gamma
+
+  - code: CORTE_ENERGETICO_ZONA
+    level: TACTICAL
+    description: "Corte energético regional"
+    p_base: 0.01
+    distribution:
+      type: POISSON
+      parameters: { lambda: 1.0 }
+    stress_weight: 1.1
+    conditioners:
+      - event: OLA_CALOR_EXTREMA
+        multiplier: 5.0
+        scope: probability
+    target: { type: ZONE, selector: "ZONE_*" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.4 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.2
+        stress_scaling: gamma
+
+  # ===== MICRO =====
+
+  - code: RETRASO_CARGA_OPERATIVO
+    level: MICRO
+    description: "Retraso operativo menor"
+    p_base: 0.15
+    distribution: { type: LOGNORMAL, parameters: {} }
+    stress_weight: 0.8
+    conditioners: []
+    target: { type: NODE, selector: "WAREHOUSE_*" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.95 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.05
+        stress_scaling: gamma
+
+  - code: FALLA_MECANICA_LEVE
+    level: MICRO
+    description: "Falla mecánica leve"
+    p_base: 0.08
+    distribution: { type: EVT, parameters: {} }
+    stress_weight: 0.9
+    conditioners: []
+    target: { type: UNIT, selector: "TRUCK_*" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.9 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.1
+        stress_scaling: gamma
+
+  - code: CONGESTION_URBANA
+    level: MICRO
+    description: "Congestión urbana puntual"
+    p_base: 0.2
+    distribution: { type: LOGNORMAL, parameters: {} }
+    stress_weight: 0.7
+    conditioners: []
+    target: { type: ARC, selector: "URBAN_ROAD_*" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.85 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.08
+        stress_scaling: gamma
