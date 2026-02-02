@@ -28,13 +28,13 @@ from pathlib import Path
 import pickle
 import json
 from datetime import datetime
-
 from bloque2.incidents import ManifestLoader, Manifest
 from bloque2.generator import (
     MonteCarloGenerator,
     NetworkSnapshot,
     Scenario,
     ScenarioAnalyzer,
+    MonteCarloEngine,
     load_base_network_from_bloque1
 )
 
@@ -103,56 +103,42 @@ class StochasticNetworkPipeline:
         self.manifest = ManifestLoader.load(manifest_path)
         print(f"✓ Manifiesto cargado: {len(self.manifest.incidents)} eventos")
     
-    def generate_stochastic_scenarios(
-        self, 
-        n_scenarios: int,
-        verbose: bool = True
-    ) -> List[Scenario]:
+    def generate_stochastic_scenarios(self, n_scenarios: int, verbose: bool = True):
         """
-        Genera N escenarios estocásticos.
-        
-        Args:
-            n_scenarios: Número de escenarios a generar
-            verbose: Si True, muestra progreso
-            
-        Returns:
-            Lista de escenarios generados
-            
-        Raises:
-            RuntimeError: Si no se ha cargado topología o manifiesto
+        Orquesta la simulación Monte Carlo con convergencia estadística.
         """
+        # 1. Validaciones de Rigor
         if self.base_network is None:
-            raise RuntimeError("Debe cargar topología primero (load_topology_from_bloque1)")
-        
+            raise RuntimeError("Falta la topología base. Llamá a load_topology_from_bloque1 primero.")
         if self.manifest is None:
-            raise RuntimeError("Debe cargar manifiesto primero (load_incident_manifest)")
-        
-        # Crear generador
+            raise RuntimeError("Falta el manifiesto de incidentes. Llamá a load_incident_manifest primero.")
+
+        if verbose:
+            print(f"Iniciando propagación de riesgo (Límite: {n_scenarios} iteraciones)...")
+
+        # 2. Inicialización del Cerebro (Generator)
         self.generator = MonteCarloGenerator(
             self.base_network,
             self.manifest,
             seed=self.seed
         )
-        
-        # Generar escenarios
+
+        # 3. Inicialización del Reloj/Controlador (Engine)
+        engine = MonteCarloEngine(self.generator)
+
+        # 4. Ejecución con Convergencia Dual (Módulo 5 del Word)
+        # El engine decidirá si frena antes de n_scenarios si los datos se estabilizan
+        self.scenarios = engine.run(
+            e_limit=0.01, 
+            window=100, 
+            max_iter=n_scenarios
+        )
+
         if verbose:
-            def progress(i, n):
-                if i % max(1, n // 20) == 0 or i == n:
-                    print(f"  Progreso: {i}/{n} ({i/n*100:.1f}%)", end='\r')
-            
-            print(f"\nGenerando {n_scenarios} escenarios...")
-            self.scenarios = self.generator.generate_scenarios(
-                n_scenarios, 
-                progress_callback=progress
-            )
-            print()  # Nueva línea después del progreso
-        else:
-            self.scenarios = self.generator.generate_scenarios(n_scenarios)
-        
-        if verbose:
-            print(f"✓ {len(self.scenarios)} escenarios generados")
+            print(f"✓ Proceso finalizado. Total escenarios: {len(self.scenarios)}")
         
         return self.scenarios
+    
     
     def get_statistics(self) -> Dict[str, Any]:
         """
