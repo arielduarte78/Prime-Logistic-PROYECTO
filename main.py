@@ -89,7 +89,7 @@ def ejecutar_pipeline():
     manifest_path = os.path.join(src_path, "bloque2", "manifest.yaml")
     pipeline.load_incident_manifest(manifest_path)
 
-    n_scenarios_limit = 500
+    n_scenarios_limit = 5000
     print(f"   Iniciando simulación (Límite: {n_scenarios_limit} iteraciones)...")
     
     # El motor decidirá cuándo frenar basándose en Media, P95 y Varianza

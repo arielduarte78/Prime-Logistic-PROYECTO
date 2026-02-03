@@ -155,7 +155,7 @@ class MonteCarloEngine:
     def __init__(self, generator: MonteCarloGenerator):
         self.generator = generator
 
-    def run(self, e_limit=0.01, window=50, max_iter=500):
+    def run(self, e_limit=0.001, window=50, max_iter=5000):
         history, results = [], []
         for i in range(1, max_iter + 1):
             s = self.generator._generate_single_scenario(i)
