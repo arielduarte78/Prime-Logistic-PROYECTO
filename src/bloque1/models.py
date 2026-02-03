@@ -17,10 +17,26 @@ class ErrorDefinition:
 ERROR_CATALOG: Dict[str, ErrorDefinition] = {
     "ERR_GEO_001": ErrorDefinition("Coordenadas fuera de rango.", "HIGH", "Validar Lat [-90, 90] y Lon [-180, 180]."),
     "ERR_TIME_001": ErrorDefinition("Cronología inválida.", "HIGH", "Asegurar que start < end."),
+    "ERR_TIME_002": ErrorDefinition("Timestamp inválido.", "MEDIUM", "Usar ISO 8601 (YYYY-MM-DDTHH:MM:SSZ)."),
+    "ERR_TIME_003": ErrorDefinition("Tipo de tiempo inválido.", "MEDIUM", "Enviar ISO string o datetime."),
+    "ERR_TIME_004": ErrorDefinition("Ventanas inválidas.", "MEDIUM", "Enviar lista de ventanas con start/end."),
     "ERR_COST_001": ErrorDefinition("Perfil de costo inconsistente.", "CRITICAL", "Revisar tramos/parámetros."),
     "ERR_META_001": ErrorDefinition("Metadatos incompletos.", "MEDIUM", "Verificar source y version."),
     "ERR_SPEED_001": ErrorDefinition("Velocidad no positiva.", "HIGH", "Revisar que default > 0."),
-    "ERR_ARC_001": ErrorDefinition("Error de topología.", "CRITICAL", "Evitar bucles (origin == destination).")
+    "ERR_ARC_001": ErrorDefinition("Error de topología.", "CRITICAL", "Evitar bucles (origin == destination)."),
+    "ERR_ID_000": ErrorDefinition("Kind inválido.", "HIGH", "Usar 'NODE' o 'ARC'."),
+    "ERR_ID_001": ErrorDefinition("ID inválido.", "HIGH", "Respetar formato de ID requerido."),
+    "ERR_ID_002": ErrorDefinition("ID ausente.", "HIGH", "Incluir el campo id en la fila."),
+    "ERR_REF_001": ErrorDefinition("Referencia inválida.", "CRITICAL", "Cargar nodos origen/destino antes del arco."),
+    "ERR_TYPE_001": ErrorDefinition("Tipo inválido.", "HIGH", "Revisar tipo de dato esperado."),
+    "ERR_SYS_001": ErrorDefinition("Error de sistema.", "CRITICAL", "Revisar formato general del payload."),
+    "ERR_MODEL_INIT": ErrorDefinition("Error al instanciar modelo.", "CRITICAL", "Validar campos requeridos."),
+    "ERR_MODE_STATION_INCOMPAT": ErrorDefinition("Modo incompatible con estación.", "HIGH", "Usar estaciones compatibles con el modo."),
+    "ERR_CAP_INVALID": ErrorDefinition("Capacidad inválida.", "HIGH", "Capacidad debe ser numérica."),
+   "ERR_CAP_NEG": ErrorDefinition("Capacidad negativa.", "HIGH", "Capacidad debe ser >= 0."),
+   "ERR_CAP_TOO_LARGE": ErrorDefinition("Capacidad excede máximo.", "HIGH", "Reducir capacidad o ajustar MAX_CAPACITY."),
+   "WARN_CAP_EXCEEDS_MODE": ErrorDefinition("Capacidad excede umbral por modo.", "MEDIUM", "Se clampeará al exportar."),
+
 }
 
 class PrimeLogisticsError(Exception):
