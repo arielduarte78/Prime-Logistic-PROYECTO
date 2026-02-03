@@ -1,5 +1,6 @@
 import json
 from src.bloque1.network import NetworkIndexer, Ingestor
+from src.bloque1.topology import TopologyBuilder
 
 def load_json(path):
     with open(path, 'r', encoding='utf-8') as f:
@@ -20,3 +21,8 @@ print("Arcs loaded:", s2, "failed:", f2)
 report = ing.get_validation_report()
 print("Validation report:", report)
 print("Indexer counts:", indexer.node_count, indexer.arc_count)
+
+tb = TopologyBuilder(indexer)
+tb.build_topology()
+package = tb.export_matrices(sparse=False)
+print("Matrices exportadas:", {k: getattr(v, "shape", None) for k, v in package.items() if k in {"A", "C", "T", "K", "D"}})
