@@ -297,17 +297,17 @@ class Ingestor:
             if cap_val is not None:
                 try:
                     cap_f = float(cap_val)
-                    if cap_unit:
-                        from .config import UNIT_CONVERSIONS_TO_TON
-                        conv = UNIT_CONVERSIONS_TO_TON.get(str(cap_unit).lower())
-                        if conv is not None:
-                            cap_f = cap_f * float(conv)
-                        else:
-                            logger.warning("Arc %s capacity_unit desconocida '%s'; se asume toneladas", id_val, cap_unit)
-
                 except Exception:
                     self._add_system_error(f"Arc {id_val} capacity inválida: {cap_val}", "ERR_CAP_INVALID", context=f"Arc {id_val}")
                     return False
+
+                if cap_unit:
+                    from .config import UNIT_CONVERSIONS_TO_TON
+                    conv = UNIT_CONVERSIONS_TO_TON.get(str(cap_unit).lower())
+                    if conv is not None:
+                        cap_f = cap_f * float(conv)
+                    else:
+                        logger.warning("Arc %s capacity_unit desconocida '%s'; se asume toneladas", id_val, cap_unit)
 
                 if cap_f < 0:
                     self._add_system_error(f"Arc {id_val} tiene capacity negativa: {cap_f}", "ERR_CAP_NEG", context=f"Arc {id_val}")
