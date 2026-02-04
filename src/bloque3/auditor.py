@@ -34,12 +34,21 @@ class AuditRecord:
 
 
 def load_scenarios(path: str) -> Sequence[Dict[str, Any]]:
-    """Carga un archivo pickle con la lista de escenarios."""
+    """Carga un archivo pickle y extrae la lista de escenarios con resiliencia."""
     with open(path, "rb") as handle:
         data = pickle.load(handle)
-    if not isinstance(data, (list, tuple)):
-        raise ValueError("scenarios.pkl debe contener una lista/tupla de escenarios")
-    return data
+    
+    # 1. Caso ideal: es una lista directa
+    if isinstance(data, (list, tuple)):
+        return data
+    
+    # 2. Caso robusto: la data está envuelta en un objeto (sniffing de atributos)
+    for attr in ("scenarios", "items", "records", "data"):
+        value = getattr(data, attr, None)
+        if isinstance(value, (list, tuple)):
+            return value
+            
+    raise ValueError("scenarios.pkl no contiene una estructura de datos compatible.")
 
 
 def _read_metric(scenario: Dict[str, Any], *keys: str) -> Optional[float]:
