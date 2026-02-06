@@ -23,6 +23,12 @@ from bloque3.inference_engine import InferenceEngine  # noqa: E402
 from bloque3.inference_engine import InferenceConfig  # noqa: E402
 from bloque3.bayesian_judge import PriorConfig    # noqa: E402
 from bloque3.auditor import FailureCriteria       # noqa: E402
+from bloque4.schema import Graph, Node, Edge, OptimizerConfig # noqa: E402
+from bloque4.engines import DijkstraEngine # noqa: E402
+from bloque4.profiler import profile_route # noqa: E402
+from bloque4.selector import select_strategic_options # noqa: E402
+from bloque4.report import PrimeStrategicReporter, RenderProfile # noqa: E402
+import numpy as np # noqa: E402
 
 def ejecutar_pipeline():
     """
@@ -336,6 +342,136 @@ def ejecutar_pipeline():
     print("SIMULACIÓN COMPLETADA EXITOSAMENTE")
     print("=" * 80)
 # --- FIN BLOQUE 3 ---
+# ========================================================================
+    # 8. OPTIMIZACIÓN Y REPORTE ESTRATÉGICO (BLOQUE 4)
+    # ========================================================================
+    print("\n4. Ejecutando Prime Optimizer (Bloque 4)...")
+
+    # A. TRADUCCIÓN DE DATOS (Bridging B1/B3 -> B4)
+    # ------------------------------------------------------------------------
+    print("  Integrando Topología y Riesgo Bayesiano...")
+    
+    # 1. Convertir Nodos
+    b4_nodes = []
+    for nid in node_ids:
+        b4_nodes.append(Node(node_id=nid))
+
+    # 2. Convertir Arcos e Inyectar Riesgo (Mapping)
+    b4_edges = []
+    
+    # Extraemos el mapa de fragilidad (probabilidad media de fallo) del reporte B3
+    # Asumimos que report.nodes[id].mean nos da la probabilidad de fallo
+    fragility_map = {}
+    if hasattr(report, 'nodes'):
+        for nid, dist in report.nodes.items():
+            fragility_map[nid] = dist.mean
+
+    for arc_id, arc_data in indexer._arcs.items():
+        # Lógica de Riesgo: El riesgo de un arco es una función de sus nodos
+        # En este MVP simplificado, tomamos el riesgo del nodo destino
+        target_node = arc_data.destination
+        risk_prob = fragility_map.get(target_node, 0.0)
+        
+        # Guardrail de seguridad (phi < 1.0)
+        risk_prob = min(risk_prob, 0.9999)
+
+        b4_edges.append(Edge(
+            edge_id=arc_id,
+            source=arc_data.origin,
+            target=arc_data.destination,
+            cost=100.0, # Costo base hardcodeado para la demo (o usar arc_data.cost)
+            risk=risk_prob
+        ))
+
+    # Crear el Grafo Inmutable
+    prime_graph = Graph(
+        nodes=b4_nodes,
+        edges=b4_edges,
+        edge_indexer={e.edge_id: i for i, e in enumerate(b4_edges)}
+    )
+
+    # B. SIMULACIÓN DE ESTRATEGIAS (Generación de Dilemas)
+    # ------------------------------------------------------------------------
+    # Como la topología es simple (1 arco), simularemos diferentes "Kappas"
+    # para ver cómo el sistema evalúa la misma ruta bajo lentes distintos.
+    
+    strategies = [0.0, 10.0, 50.0] # Neutro, Cauteloso, Paranoico
+    raw_solutions = []
+    
+    # Vector de probabilidades (phi) para el motor
+    phi_vector = np.array([e.risk for e in prime_graph.edges])
+
+    print(f"  Simulando {len(strategies)} perspectivas estratégicas...")
+    
+    engine = DijkstraEngine()
+    
+    for k in strategies:
+        # Configuración Dinámica
+        config_iter = OptimizerConfig(
+            source_node_id="WAREHOUSE_001",
+            target_node_id="CLIENT_001",
+            kappa=k,
+            # Pesos para el selector
+            cost_weight=0.6,
+            risk_weight=0.4,
+            entropy_weight=0.5
+        )
+        
+        try:
+            # 1. Resolver (Motor)
+            sol = engine.solve(prime_graph, phi_vector, config_iter)
+            
+            # Hack para diferenciar soluciones en el selector si la ruta es idéntica
+            # (En producción esto no es necesario, pero ayuda en demos de 1 arco)
+            sol.optimized_cost = sol.total_cost + (k * sol.total_risk)
+            
+            raw_solutions.append((sol, config_iter))
+        except Exception as e:
+            print(f"  [!] Fallo en estrategia k={k}: {e}")
+
+    # C. PROFILING Y SELECCIÓN
+    # ------------------------------------------------------------------------
+    final_solutions = []
+    final_profiles = []
+    
+    # Usamos la config de la estrategia más balanceada para el reporte final
+    master_config = raw_solutions[1][1] if len(raw_solutions) > 1 else raw_solutions[0][1]
+
+    for sol, conf in raw_solutions:
+        # 2. Perfilado (Profiler)
+        prof = profile_route(prime_graph, sol, conf)
+        final_solutions.append(sol)
+        final_profiles.append(prof)
+
+    # 3. Selección (Selector)
+    strategic_options = select_strategic_options(
+        solutions=final_solutions,
+        profiles=final_profiles,
+        config=master_config
+    )
+
+    # D. GENERACIÓN DEL REPORTE (Reporter)
+    # ------------------------------------------------------------------------
+    print("  Generando narrativa de decisión...")
+    
+    # Configuración Visual
+    visual_profile = RenderProfile(
+        use_emojis=True,
+        border_top="┌" + "─"*60 + "┐",
+        border_bottom="└" + "─"*60 + "┘"
+    )
+    
+    reporter = PrimeStrategicReporter(
+        config=master_config, 
+        render_profile=visual_profile,
+        top_n_analysis=3
+    )
+    
+    full_report = reporter.generate_full_report(strategic_options)
+
+    print("\n" + "#" * 65)
+    print(full_report)
+    print("#" * 65 + "\n")
 
 if __name__ == "__main__":
     ejecutar_pipeline()
