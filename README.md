@@ -3,7 +3,7 @@
 **Status:** MVP v1.0 (Stable Core)
 **Access:** Internal Team & Contributors Only
 
-⚠️ **CONFIDENTIAL**
+ **CONFIDENTIAL**
 This repository contains proprietary algorithms for stochastic optimization and Bayesian inference.
 Do not share outside the team.
 
