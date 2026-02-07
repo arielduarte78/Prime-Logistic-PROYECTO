@@ -7,13 +7,13 @@
 This repository contains proprietary algorithms for stochastic optimization and Bayesian inference.
 Do not share outside the team.
 
-## 🎯 Objetivo Técnico
+##  Objetivo Técnico
 
 Prime Logistics es una plataforma modular para modelar, simular y optimizar redes logísticas bajo incertidumbre extrema.
 
 El objetivo de ingeniería es mantener una arquitectura stateless y data-driven, donde la topología y el riesgo fluyen a través de cuatro bloques aislados que se comunican exclusivamente mediante contratos de datos inmutables. Produce recomendaciones de rutas robustas y explicables bajo incertidumbre.
 
-## 🏛️ Arquitectura del Sistema
+##  Arquitectura del Sistema
 
 El sistema implementa un pipeline secuencial estricto.
 
@@ -25,7 +25,7 @@ graph LR
     B4 -->|Reporte Estratégico| User
 ```
 
-## 🧠 Mapa de Módulos (Source of Truth)
+##  Mapa de Módulos (Source of Truth)
 
 | Módulo | Responsabilidad Técnica | Archivos Clave |
 |--------|--------------------------|----------------|
@@ -35,7 +35,7 @@ graph LR
 | **B4: Optimizer** | Decisión: Optimiza rutas y genera narrativa de negocio. | `selector.py`, `reporter.py` |
 | **Main** | Orquestación: Conecta los cables entre bloques. | `main.py` |
 
-## ⚙️ Quick Start
+##  Quick Start
 
 ### 1. Instalación
 
@@ -60,7 +60,7 @@ python main.py
 
 **Expected Output:** Logs de auditoría de los 4 bloques, análisis de riesgo y un reporte estratégico ASCII en consola. Se generarán artefactos en `output/`.
 
-## 💻 Guía de Uso por Bloque 
+## Guía de Uso por Bloque 
 
 ### Bloque 1: Ingesta de Topología
 
@@ -126,7 +126,7 @@ print(PrimeStrategicReporter(optimizer_config).generate_full_report(options))
 ```
 el optimizador no busca optimalidad determinista, sino trade-offs robustos.
 
-## 📏 Estándares de Código
+##  Estándares de Código
 
 Exigimos rigor en cada commit.
 
@@ -146,7 +146,7 @@ Usamos mypy para validación estática.
 - Los errores de topología deben levantar ValueError con mensajes descriptivos.
 - Usar el LOGGER configurado, no print() (salvo en CLI output).
 
-## 🗺️ Roadmap & Status
+##  Roadmap & Status
 
 | Fase | Estado | Objetivo |
 |------|--------|----------|
@@ -154,7 +154,7 @@ Usamos mypy para validación estática.
 | Fase 2: Robustez | En Progreso | Persistencia JSON, Tests Unitarios (Pytest), Logs Rotativos. |
 | Fase 3: Escala | Futuro | Integración OpenStreetMap, API REST (FastAPI), Dashboard Web. |
 
-## 🆘 Troubleshooting
+##  Troubleshooting
 
 **Error:** `ImportError: no module named src...`
 **Solución:** Ejecutar siempre desde la raíz del proyecto: `python main.py`.
@@ -162,7 +162,7 @@ Usamos mypy para validación estática.
 **Error:** `ZeroDivisionError` en el reporte.
 **Solución:** Verificar que los costos de los arcos sean > 0.0 en la definición.
 
-## 👤 Contacto Interno
+##  Contacto Interno
 
 **Lead Architect:** Ariel
 **Tech Stack:** Python 3.9+ / NumPy / SciPy
