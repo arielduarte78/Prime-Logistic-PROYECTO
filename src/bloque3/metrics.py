@@ -1,4 +1,4 @@
-# main_bloque3.py
+# metrics_bloque3.py
 """
 Orquestador Principal del Bloque 3: Bayesian Inference Engine.
 Une Auditor, Judge, Metrics y Report para procesar los escenarios del Bloque 2.
