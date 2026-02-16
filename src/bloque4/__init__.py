@@ -1,3 +1,4 @@
+#init.py
 from .schema import (
     Edge,
     Graph,

@@ -20,28 +20,13 @@ DEFAULT_COSTO_FIJO = 2500.0
 # =============================================================================
 # PARÁMETROS DE INCERTIDUMBRE Y RIESGO (BLOQUE 2 Y 3)
 # =============================================================================
-N_ESCENARIOS = 1000           # Simulaciones de Monte Carlo para Bayes
+N_ESCENARIOS = 5000           # Simulaciones de Monte Carlo para Bayes
 SIGMA_DEMANDA = 0.15          # Volatilidad relativa (15%)
 
 # Hiperparámetro de Aversión al Riesgo
 # 0.0 = Ignora el riesgo (Temerario)
 # 10.0+ = Prioriza seguridad absoluta (Conservador)
 LAMBDA_RIESGO = 5.0
-
-# =============================================================================
-# MOTOR DE OPTIMIZACIÓN - SIMULATED ANNEALING (BLOQUE 4)
-# =============================================================================
-# Calibración de la Temperatura Inicial (T0)
-# Buscamos que el sistema acepte un empeoramiento inicial con esta probabilidad:
-P_ACEPTACION_INICIAL = 0.8
-
-# Proceso de Enfriamiento
-ALPHA_ENFRIAMIENTO = 0.95     # Velocidad de descenso térmico
-CADENA_MARKOV_FACTOR = 10     # L multiplicador (L = 10 * N_rutas)
-
-# Criterios de Parada
-T_MIN = 0.001                 # Punto de congelamiento absoluto
-LIMITE_ESTANCAMIENTO = 50     # Épocas sin mejora para Snapshot
 
 
 
@@ -59,3 +44,4 @@ MAX_LATITUDE = 90.0
 MIN_LATITUDE = -90.0
 MAX_LONGITUDE = 180.0
 MIN_LONGITUDE = -180.0
+

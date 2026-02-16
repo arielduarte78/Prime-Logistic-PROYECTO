@@ -77,7 +77,7 @@ MODE_ALLOWED_STATION_TYPES: Dict[str, tuple] = {
     "boat": ("port", "harbor"),
     "rail": ("rail_terminal", "rail_yard"),
     "train": ("rail_terminal", "rail_yard"),
-    "truck": ("road_node", "warehouse", "terminal", "depot"),
+    "truck": ("road_node", "warehouse", "terminal", "depot","airport","port","harbor"),
     "camion": ("road_node", "warehouse", "terminal", "depot"),
     "default": ("warehouse", "terminal", "road_node")
 }
