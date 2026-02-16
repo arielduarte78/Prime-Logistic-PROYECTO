@@ -1,5 +1,5 @@
 REPORTE DE RIESGO - PRIME LOGISTICS
-Fecha: 2026-02-06 13:05:14.395900
+Fecha: 2026-02-13 13:40:09.112418
 Escenarios: 200
-Capacidad Promedio Retenida: 99.70%
-Peor Escenario ID: 87 con 80.00%
+Capacidad Promedio Retenida: 0.00%
+Peor Escenario ID: 1 con 0.00%

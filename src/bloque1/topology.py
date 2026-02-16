@@ -1,3 +1,4 @@
+# src/bloque1/topology.py
 import logging
 from typing import Dict, List, Any
 import numpy as np
@@ -84,10 +85,34 @@ class TopologyBuilder:
             cap_val = getattr(arc, "capacity", 10000.0)
             d_cap.append(float(cap_val) if cap_val is not None else 10000.0)
 
-            # 2. Perfil de Velocidad y Modo
-            mode = "truck" # Default
-            speed_base = MODE_AVG_SPEED_KMH.get(mode, MODE_AVG_SPEED_KMH["default"])
+            # -------------------------------------------------------
+            # 2. Perfil de Velocidad y Modo (CORREGIDO MULTI-MODAL)
+            # -------------------------------------------------------
+            mode = "truck" # Default seguro
+            
+            # Intentamos extraer el modo real de la metadata
+            if arc.metadata:
+                if hasattr(arc.metadata, "extras") and isinstance(arc.metadata.extras, dict):
+                     # Caso normal: Metadata es objeto y tiene dict extras
+                     mode = arc.metadata.extras.get("mode", "truck")
+                elif isinstance(arc.metadata, dict):
+                     # Caso borde: Metadata es un dict directo
+                     mode = arc.metadata.get("mode", "truck")
+
+            # Normalizamos (ej: "Avion" -> "avion") para matchear config
+            mode = str(mode).strip().lower()
+
+            # Buscamos velocidad base en config (ej: air=800, truck=80)
+            speed_default = MODE_AVG_SPEED_KMH.get("default", 50.0)
+            speed_base = MODE_AVG_SPEED_KMH.get(mode, speed_default)
+
+            # Si el arco tiene un perfil de velocidad específico (override), lo usamos
+            if hasattr(arc, "speed_profile") and arc.speed_profile:
+                if hasattr(arc.speed_profile, "default") and arc.speed_profile.default > 0:
+                     speed_base = arc.speed_profile.default
+
             speeds.append(speed_base)
+            # -------------------------------------------------------
 
             # 3. Coordenadas para Haversine
             lat_u.append(origin.lat)

@@ -1,3 +1,4 @@
+#schema.py
 from __future__ import annotations
 import math
 import logging
@@ -38,6 +39,8 @@ class Edge:
     source: str
     target: str
     cost: float
+    distance: float
+    mode: str  
     time: float = 0.0
     capacity: Optional[float] = None
     risk: Optional[float] = None
@@ -48,6 +51,9 @@ class Edge:
             raise ValueError(f"Costo negativo en arco {self.edge_id}")
         if self.risk is not None and not (0.0 <= self.risk < 1.0):
             raise ValueError(f"Riesgo fuera de dominio [0,1) en arco {self.edge_id}: {self.risk}")
+        # Validación de seguridad para distancia
+        if self.distance < 0:
+            raise ValueError(f"Distancia negativa detectada en arco {self.edge_id}")
 
     @property
     def reliability(self) -> Optional[float]:
