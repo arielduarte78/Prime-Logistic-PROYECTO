@@ -1,6 +1,7 @@
 # src/bloque1/config.py
 import os
 from typing import Dict
+from dataclasses import dataclass
 
 def _env_float(name: str, default: float) -> float:
     v = os.getenv(name)
@@ -96,3 +97,13 @@ UNIT_CONVERSIONS_TO_TON: Dict[str, float] = {
     "unit": 1.0,
     "units": 1.0
 }
+
+"""Configuración externa para el Bloque 1 (Ingesta Espacial)."""
+
+
+@dataclass
+class H3RouterConfig:
+    resolution: int = int(os.getenv("PRIME_H3_RESOLUTION", 6))
+    buffer_rings: int = int(os.getenv("PRIME_H3_BUFFER_RINGS", 1))
+    local_rings: int = int(os.getenv("PRIME_H3_LOCAL_RINGS", 1))
+    max_cells: int = int(os.getenv("PRIME_H3_MAX_CELLS", 20000))
