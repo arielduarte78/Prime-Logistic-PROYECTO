@@ -98,7 +98,7 @@ UNIT_CONVERSIONS_TO_TON: Dict[str, float] = {
     "units": 1.0
 }
 
-"""Configuración externa para el Bloque 1 (Ingesta Espacial)."""
+#Configuración externa para el Bloque 1 (Ingesta Espacial).
 
 
 @dataclass
