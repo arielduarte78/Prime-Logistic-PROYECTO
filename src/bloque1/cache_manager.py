@@ -1,5 +1,5 @@
+"""Gestor de Caché Seguro para Prime Logistics v1.2."""
 from __future__ import annotations
-
 
 import hashlib
 import json
@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Optional
 
 import networkx as nx
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
+logger = logging.getLogger(__name__)
 
 class SafeCacheManager:
     def __init__(self, cache_dir: str = "data/osm_cache"):
@@ -27,6 +28,17 @@ class SafeCacheManager:
         key_raw = f"{origin}|{dest}|{zoom}|{profile}|{mode}"
         return hashlib.sha256(key_raw.encode("utf-8")).hexdigest()
 
+    def _sanitize_for_graphml(self, graph: "nx.MultiDiGraph") -> None:
+        """Convierte listas/diccionarios en strings para que nx.write_graphml no crashee."""
+        for _, data in graph.nodes(data=True):
+            for k, v in data.items():
+                if isinstance(v, (list, dict, tuple, set)):
+                    data[k] = str(v)
+        for _, _, data in graph.edges(data=True):
+            for k, v in data.items():
+                if isinstance(v, (list, dict, tuple, set)):
+                    data[k] = str(v)
+
     def save_graph(
         self,
         graph: "nx.MultiDiGraph",
@@ -36,54 +48,60 @@ class SafeCacheManager:
         profile: int,
         mode: str,
     ) -> bool:
-        """
-        Guarda el grafo y su metadata de forma atómica.
-        Usa networkx.write_graphml para serializar y evitar dependencia en osmnx.
-        """
+        """Guarda el grafo y su metadata de forma atómica y segura."""
         key = self._generate_key(origin, dest, zoom, profile, mode)
         graph_path = self.cache_dir / f"{key}.graphml"
         meta_path = self.cache_dir / f"{key}.meta.json"
         lock_path = self.lock_dir / f"{key}.lock"
 
-        lock = FileLock(str(lock_path))
-        with lock:
-            # Guardado atómico: escribir en temp y mover
-            with tempfile.NamedTemporaryFile(delete=False, dir=self.cache_dir) as tmp:
-                tmp_path = Path(tmp.name)
-            try:
-                # usar networkx para serializar
-                nx.write_graphml(graph, str(tmp_path))
-                checksum = self._file_checksum(tmp_path)
-                meta = {
-                    "cache_key": key,
-                    "origin": origin,
-                    "dest": dest,
-                    "zoom": zoom,
-                    "profile": profile,
-                    "mode": mode,
-                    "checksum": checksum,
-                    "saved_at": datetime.utcnow().isoformat(),
-                }
-                shutil.move(str(tmp_path), str(graph_path))
-                with open(meta_path, "w", encoding="utf-8") as f:
-                    json.dump(meta, f)
-                return True
-            except Exception as e:
-                if tmp_path.exists():
-                    try:
-                        tmp_path.unlink()
-                    except Exception:
-                        pass
-                logging.exception("Error saving graph to cache: %s", e)
-                return False
+        # FIX 1: Timeout de 10 segundos para evitar bloqueos infinitos
+        lock = FileLock(str(lock_path), timeout=10)
+        
+        try:
+            with lock:
+                with tempfile.NamedTemporaryFile(delete=False, dir=self.cache_dir) as tmp:
+                    tmp_path = Path(tmp.name)
+                
+                try:
+                    # FIX 2: Limpiar atributos incompatibles antes de guardar
+                    self._sanitize_for_graphml(graph)
+                    nx.write_graphml(graph, str(tmp_path))
+                    
+                    checksum = self._file_checksum(tmp_path)
+                    meta = {
+                        "cache_key": key,
+                        "origin": origin,
+                        "dest": dest,
+                        "zoom": zoom,
+                        "profile": profile,
+                        "mode": mode,
+                        "checksum": checksum,
+                        "saved_at": datetime.utcnow().isoformat(),
+                    }
+                    shutil.move(str(tmp_path), str(graph_path))
+                    with open(meta_path, "w", encoding="utf-8") as f:
+                        json.dump(meta, f)
+                    
+                    logger.info("Caché guardado exitosamente: %s", key)
+                    return True
+                    
+                except Exception as e:
+                    if tmp_path.exists():
+                        try:
+                            tmp_path.unlink()
+                        except Exception:
+                            pass
+                    logger.exception("Error guardando el grafo en cache: %s", e)
+                    return False
+                    
+        except Timeout:
+            logger.error("Timeout al adquirir lock para %s. Posible contención severa.", key)
+            return False
 
     def load_graph(
         self, origin: str, dest: str, zoom: int, profile: int, mode: str
     ) -> Optional["nx.MultiDiGraph"]:
-        """
-        Carga el grafo validando checksum y metadata.
-        Usa networkx.read_graphml para deserializar y evitar dependencia en osmnx.
-        """
+        """Carga el grafo validando checksum y metadata."""
         key = self._generate_key(origin, dest, zoom, profile, mode)
         graph_path = self.cache_dir / f"{key}.graphml"
         meta_path = self.cache_dir / f"{key}.meta.json"
@@ -92,40 +110,44 @@ class SafeCacheManager:
         if not graph_path.exists() or not meta_path.exists():
             return None
 
-        lock = FileLock(str(lock_path))
-        with lock:
-            try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-                expected_checksum = meta.get("checksum")
-            except Exception as e:
-                self._quarantine_file(meta_path, key, reason="meta_corrupt", exc=e)
-                return None
+        # FIX 1: Timeout en carga también
+        lock = FileLock(str(lock_path), timeout=5)
+        try:
+            with lock:
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    expected_checksum = meta.get("checksum")
+                except Exception as e:
+                    self._quarantine_file(meta_path, key, reason="meta_corrupt", exc=e)
+                    return None
 
-            actual_checksum = self._file_checksum(graph_path)
-            if actual_checksum != expected_checksum:
-                self._quarantine_file(
-                    graph_path, key, suffix=".corrupt.graphml", reason="checksum_mismatch"
-                )
-                return None
+                actual_checksum = self._file_checksum(graph_path)
+                if actual_checksum != expected_checksum:
+                    self._quarantine_file(
+                        graph_path, key, suffix=".corrupt.graphml", reason="checksum_mismatch"
+                    )
+                    return None
 
-            try:
-                # usar networkx para cargar
-                G = nx.read_graphml(str(graph_path))
-                # networkx.read_graphml puede devolver Graph; convertir a MultiDiGraph si es necesario
-                if not isinstance(G, nx.MultiDiGraph):
-                    H = nx.MultiDiGraph()
-                    H.add_nodes_from(G.nodes(data=True))
-                    H.add_edges_from(G.edges(data=True))
-                    G = H
-                return G
-            except Exception as e:
-                self._quarantine_file(
-                    graph_path, key, suffix=".corrupt.graphml", reason="load_error", exc=e
-                )
-                return None
+                try:
+                    G = nx.read_graphml(str(graph_path))
+                    if not isinstance(G, nx.MultiDiGraph):
+                        H = nx.MultiDiGraph()
+                        H.add_nodes_from(G.nodes(data=True))
+                        H.add_edges_from(G.edges(data=True))
+                        G = H
+                    logger.info("Caché %s recuperado y validado.", key)
+                    return G
+                except Exception as e:
+                    self._quarantine_file(
+                        graph_path, key, suffix=".corrupt.graphml", reason="load_error", exc=e
+                    )
+                    return None
+                    
+        except Timeout:
+            logger.warning("Timeout al leer lock para %s. Ignorando caché.", key)
+            return None
 
-    # Métodos auxiliares
     def _file_checksum(self, path: Path) -> str:
         h = hashlib.sha256()
         with open(path, "rb") as f:
@@ -152,5 +174,6 @@ class SafeCacheManager:
             forensic_path = self.quarantine_dir / f"{key}_{ts}.forensic.json"
             with open(forensic_path, "w", encoding="utf-8") as f:
                 json.dump(forensic, f)
+            logger.error("Archivo movido a cuarentena: %s", dest_name)
         except Exception:
-            logging.exception("Failed to quarantine file %s", path)
+            logger.exception("Fallo catastrófico al intentar mover a cuarentena el archivo %s", path)
