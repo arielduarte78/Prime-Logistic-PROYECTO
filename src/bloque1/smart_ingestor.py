@@ -27,9 +27,13 @@ class SmartLazyIngestor:
         self.config = config
         self.cache = cache_manager
 
-        # Ajustes de OSMnx para evitar que nos bloqueen la IP
-        ox.settings.timeout = 180
-        ox.settings.use_cache = False  # Usamos nuestra propia caja fuerte
+        # Ajustes de OSMnx (Importación explícita para evitar errores de versión)
+        try:
+            from osmnx import settings as ox_settings
+            ox_settings.timeout = 180
+            ox_settings.use_cache = False
+        except Exception as e:
+            logger.warning("No se pudo configurar OSMnx: %s", e)
 
         # Directorio para locks de descarga (dentro del caché)
         self.download_lock_dir = cache_manager.lock_dir / "downloads"
@@ -42,6 +46,21 @@ class SmartLazyIngestor:
     def _emit_metric(self, name: str, value: float = 1.0, labels: dict | None = None):
         """Delega en el cache manager (que tiene el hook a producción)."""
         self.cache._emit_metric(name, value, labels)
+
+    # ----------------------------------------------------------------------
+    # Adaptador para graph_from_polygon (compatible OSMnx v1 y v2)
+    # ----------------------------------------------------------------------
+    def _graph_from_polygon_adapter(self, polygon, **kwargs):
+        """
+        Intenta usar la API moderna (osmnx >= 2.0) y fallback a la clásica (1.x).
+        """
+        try:
+            # Intentar con la nueva ubicación (osmnx.graph.graph_from_polygon)
+            from osmnx import graph
+            return graph.graph_from_polygon(polygon, **kwargs)
+        except (ImportError, AttributeError):
+            # Fallback a la función original (osmnx 1.x)
+            return ox.graph_from_polygon(polygon, **kwargs)
 
     # ----------------------------------------------------------------------
     # Conversión de celdas a polígono (con manejo seguro de errores)
@@ -178,7 +197,7 @@ class SmartLazyIngestor:
                 poly_destino = self._cells_to_polygon(loc_d, segment_name="destino")
                 poly_troncal = self._cells_to_polygon(trunk, segment_name="troncal")
 
-                # 5. Descargas OSMnx
+                # 5. Descargas OSMnx (usando adaptador compatible)
                 subgraphs = []
                 # Filtro para autopistas (solo troncales principales)
                 trunk_filter = '["highway"~"motorway|motorway_link|trunk|trunk_link"]'
@@ -186,7 +205,9 @@ class SmartLazyIngestor:
                 try:
                     if poly_origen and not poly_origen.is_empty:
                         logger.info("   📥 Bajando mapa local Origen (%s hexágonos)...", len(loc_o))
-                        g_origen = ox.graph_from_polygon(poly_origen, network_type="drive", simplify=True)
+                        g_origen = self._graph_from_polygon_adapter(
+                            poly_origen, network_type="drive", simplify=True
+                        )
                         if g_origen.number_of_nodes() > 0 and g_origen.number_of_edges() > 0:
                             # Verificación adicional: al menos una arista tiene atributo highway
                             if any('highway' in data for _, _, data in g_origen.edges(data=True)):
@@ -207,7 +228,9 @@ class SmartLazyIngestor:
 
                     if poly_destino and not poly_destino.is_empty:
                         logger.info("   📥 Bajando mapa local Destino (%s hexágonos)...", len(loc_d))
-                        g_destino = ox.graph_from_polygon(poly_destino, network_type="drive", simplify=True)
+                        g_destino = self._graph_from_polygon_adapter(
+                            poly_destino, network_type="drive", simplify=True
+                        )
                         if g_destino.number_of_nodes() > 0 and g_destino.number_of_edges() > 0:
                             if any('highway' in data for _, _, data in g_destino.edges(data=True)):
                                 subgraphs.append(g_destino)
@@ -227,23 +250,28 @@ class SmartLazyIngestor:
 
                     if poly_troncal and not poly_troncal.is_empty:
                         logger.info("   📥 Bajando Autopistas Troncales (%s hexágonos)...", len(trunk))
-                        g_troncal = ox.graph_from_polygon(poly_troncal, custom_filter=trunk_filter, simplify=True)
-                        if g_troncal.number_of_nodes() > 0 and g_troncal.number_of_edges() > 0:
-                            if any('highway' in data for _, _, data in g_troncal.edges(data=True)):
-                                subgraphs.append(g_troncal)
-                                self._emit_metric("osm.download.success", labels={
-                                    "segment": "troncal", "mode": mode, "cells": str(total_cells)
-                                })
+                        try:
+                            g_troncal = self._graph_from_polygon_adapter(
+                                poly_troncal, custom_filter=trunk_filter, simplify=True
+                            )
+                            if g_troncal.number_of_nodes() > 0 and g_troncal.number_of_edges() > 0:
+                                if any('highway' in data for _, _, data in g_troncal.edges(data=True)):
+                                    subgraphs.append(g_troncal)
+                                    self._emit_metric("osm.download.success", labels={
+                                        "segment": "troncal", "mode": mode, "cells": str(total_cells)
+                                    })
+                                else:
+                                    logger.warning("Subgrafo troncal sin atributos highway (ruido), se omite.")
+                                    self._emit_metric("osm.download.empty", labels={
+                                        "segment": "troncal", "mode": mode, "cells": str(total_cells)
+                                    })
                             else:
-                                logger.warning("Subgrafo troncal sin atributos highway (ruido), se omite.")
+                                logger.warning("Subgrafo troncal vacío o sin aristas, se omite.")
                                 self._emit_metric("osm.download.empty", labels={
                                     "segment": "troncal", "mode": mode, "cells": str(total_cells)
                                 })
-                        else:
-                            logger.warning("Subgrafo troncal vacío o sin aristas, se omite.")
-                            self._emit_metric("osm.download.empty", labels={
-                                "segment": "troncal", "mode": mode, "cells": str(total_cells)
-                            })
+                        except ValueError:
+                            logger.info("   ℹ️ No se encontraron autopistas troncales en esta zona (Ruta corta/urbana).")
 
                 except Exception as e:
                     logger.exception("💥 Error crítico descargando de OpenStreetMap.")
@@ -277,7 +305,8 @@ class SmartLazyIngestor:
                     all_nodes.update(new_nodes)
 
                 final_graph = nx.compose_all(subgraphs)
-                final_graph = ox.utils_graph.remove_isolated_nodes(final_graph)
+                # Reemplazo de ox.utils_graph.remove_isolated_nodes por NetworkX puro
+                final_graph.remove_nodes_from(list(nx.isolates(final_graph)))
 
                 fusion_duration = (time.perf_counter() - start_fusion) * 1000
                 self._emit_metric("graph.fusion.duration_ms", fusion_duration,

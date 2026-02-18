@@ -56,33 +56,35 @@ class SafeCacheManager:
     def _prepare_graph_for_write(self, graph: nx.MultiDiGraph) -> nx.MultiDiGraph:
         """
         Devuelve una copia ligera del grafo con atributos convertidos a str
-        cuando son tipos no serializables (list, dict, tuple, set).
+        cuando son tipos no serializables (listas, diccionarios, geometrías de Shapely).
         El grafo original no se modifica.
         """
         G = nx.MultiDiGraph()
 
-        # Copiar nodos
+        # Función patovica: Si no es un tipo básico, lo convierte a texto
+        def clean_value(val):
+            # Los enteros, flotantes, strings y booleanos pasan directo
+            if isinstance(val, (int, float, str, bool)):
+                return val
+            # Si es nulo, lo guardamos como string vacío
+            if val is None:
+                return ""
+            # Cualquier otra cosa (Listas, LineStrings, Polígonos) se vuelve texto
+            return str(val)
+
+        # Copiar nodos limpiando la basura
         for n, data in graph.nodes(data=True):
-            attrs = {
-                k: (str(v) if isinstance(v, (list, dict, tuple, set)) else v)
-                for k, v in data.items()
-            }
+            attrs = {k: clean_value(v) for k, v in data.items()}
             G.add_node(n, **attrs)
 
-        # Copiar aristas preservando keys y atributos
+        # Copiar aristas preservando keys y limpiando atributos
         if graph.is_multigraph():
             for u, v, key, data in graph.edges(keys=True, data=True):
-                attrs = {
-                    k: (str(vv) if isinstance(vv, (list, dict, tuple, set)) else vv)
-                    for k, vv in data.items()
-                }
+                attrs = {k: clean_value(vv) for k, vv in data.items()}
                 G.add_edge(u, v, key=key, **attrs)
         else:
             for u, v, data in graph.edges(data=True):
-                attrs = {
-                    k: (str(vv) if isinstance(vv, (list, dict, tuple, set)) else vv)
-                    for k, vv in data.items()
-                }
+                attrs = {k: clean_value(vv) for k, vv in data.items()}
                 G.add_edge(u, v, **attrs)
 
         return G
