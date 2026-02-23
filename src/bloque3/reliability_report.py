@@ -5,6 +5,10 @@ ReliabilityReport del Bloque 3.
 Responsabilidad única:
     - Definir la estructura del "diploma" de confiabilidad.
     - Centralizar ranking de fragilidad, matriz de riesgo y métricas de confianza.
+    Note: - `risk_matrix` and `node_fragility` may be empty sequences 
+    when Block III intentionally does not compute fused risk metrics. 
+    Downstream blocks should consume per-component pairs (prob_failure, impact_mean) 
+    from BayesianJudge.reliability_report() when needed.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ class ReliabilityReport:
 def rank_fragility(node_reliability: Mapping[str, float]) -> List[Tuple[str, float]]:
     """
     Ordena nodos desde el menos confiable (fragilidad alta) al más confiable.
+    # Convert to list to ensure slicing semantics regardless of Sequence subtype
     """
     items = [(node_id, 1.0 - float(score)) for node_id, score in node_reliability.items()]
     return sorted(items, key=lambda x: x[1], reverse=True)
