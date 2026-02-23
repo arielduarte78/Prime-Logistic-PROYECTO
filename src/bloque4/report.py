@@ -1,13 +1,13 @@
-#report.py
 from __future__ import annotations
 
 import logging
 import statistics
 from dataclasses import dataclass, field
 from typing import List, Tuple, Set, Dict, Optional
-from .schema import StrategicOption, StrategicTag, OptimizerConfig
 
-# Configuración de Logging
+from .schema import StrategicOption, StrategicTag, OptimizerConfig, RouteProfile, RawSolution
+from .pareto import ParetoFrontResult, ParetoSolution
+
 LOGGER = logging.getLogger(__name__)
 
 @dataclass
@@ -272,3 +272,80 @@ El sistema sugiere la OPCIÓN #1 ({archetype})
 con una certeza del {best_opt.recommendation_strength:.2%}.
 {self.style.section_sep}
 """
+
+# ==============================================================================
+# Funciones auxiliares para construir StrategicOption desde la frontera de Pareto
+# ==============================================================================
+
+def _build_profile_from_solution(sol: ParetoSolution) -> RouteProfile:
+    """Deriva un RouteProfile simple y determinista desde ParetoSolution."""
+    # Entropía proxy: normalizamos w_survival y w_expected_cost en una escala simple
+    entropy = float(min(1.0, (sol.w_survival + sol.w_expected_cost) / (1.0 + sol.w_expected_cost)))
+    rigidity = float(max(0.0, 1.0 - entropy))
+    redundancy_index = float(max(0.0, 1.0 - (sol.total_risk or 0.0)))
+    sensitivity_vector = {"w_survival": float(sol.w_survival), "w_expected_cost": float(sol.w_expected_cost)}
+    return RouteProfile(
+        risk_scale=float(sol.total_risk or 0.0),
+        entropy=entropy,
+        rigidity=rigidity,
+        redundancy_index=redundancy_index,
+        sensitivity_vector=sensitivity_vector
+    )
+
+def _derive_tags(profile: RouteProfile, sol: ParetoSolution) -> Set[StrategicTag]:
+    tags: Set[StrategicTag] = set()
+    # Low cost heuristic
+    if sol.w_expected_cost <= 1.0 * sol.total_cost:
+        tags.add(StrategicTag.LOW_COST)
+    # High resilience heuristic
+    if sol.w_survival <= 0.1 or profile.redundancy_index > 0.9:
+        tags.add(StrategicTag.HIGH_RESILIENCE)
+    # Distributed risk heuristic
+    if profile.entropy > 0.6:
+        tags.add(StrategicTag.DISTRIBUTED_RISK)
+    # Balanced fallback
+    if not tags:
+        tags.add(StrategicTag.BALANCED)
+    return tags
+
+def _score_recommendation(sol: ParetoSolution, profile: RouteProfile) -> float:
+    """
+    Scoring simple: combina inverso de expected cost, resiliencia y entropía.
+    Resultado en [0,1].
+    """
+    c = 1.0 / (1.0 + sol.w_expected_cost)
+    r = 1.0 / (1.0 + sol.w_survival)
+    e = profile.entropy
+    raw = 0.5 * c + 0.3 * r + 0.2 * (1.0 - abs(0.5 - e))  # favorece entropías moderadas
+    return float(max(0.0, min(1.0, raw)))
+
+def build_strategic_options_from_frontier(labels: List, engine, config) -> List[StrategicOption]:
+    """
+    Convierte una frontera (labels) en una lista de StrategicOption lista para el reporter.
+    - labels: lista de Label (frontera en el nodo destino)
+    - engine: instancia de MultiObjectiveEngine con reconstruct_path
+    - config: OptimizerConfig (puede usarse para parámetros)
+    """
+    pf = ParetoFrontResult.from_labels(labels, engine)
+    options: List[StrategicOption] = []
+    for sol in pf.solutions:
+        profile = _build_profile_from_solution(sol)
+        tags = _derive_tags(profile, sol)
+        strength = _score_recommendation(sol, profile)
+        # Reconstruir RawSolution para empaquetar
+        raw = RawSolution(
+            path=list(sol.path),
+            edges=list(sol.edges),
+            total_cost=sol.total_cost,
+            optimized_cost=sol.optimized_cost,
+            total_time=sol.total_time,
+            total_risk=sol.total_risk
+        )
+        opt = StrategicOption(
+            solution=raw,
+            profile=profile,
+            strategic_tags=tags,
+            recommendation_strength=strength
+        )
+        options.append(opt)
+    return options
