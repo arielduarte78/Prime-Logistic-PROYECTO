@@ -1,6 +1,8 @@
 import logging
 import math
+from typing import Any, Mapping
 from .schema import Graph, Node, Edge
+from .weight_builder import build_weights
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ class GraphAssembler:
         return R * c
 
     @classmethod
-    def assemble(cls, indexer, node_ids, fragility_map):
+    def assemble(cls, indexer, node_ids, fragility_map, reliability_report: Mapping[str, Mapping[str, Any]] | None = None):
         """
         Construye el Grafo final calculando costos reales.
         """
@@ -72,16 +74,15 @@ class GraphAssembler:
                  if arc_data.cost_profile.cost_type == "flat":
                      costo_excel = arc_data.cost_profile.params.get("variable_coef", 0.0)
             
-            if costo_excel <= 0 and hasattr(arc_data, 'metadata'):
-                if hasattr(arc_data.metadata, 'extras') and isinstance(arc_data.metadata.extras, dict):
-                     costo_excel = float(arc_data.metadata.extras.get("original_cost", 0.0))
-
             if costo_excel > 0:
                 costo_final = costo_excel
             else:
-                # Costo = Km * Tarifa del Modo
-                tarifa = cls.RATES.get(str(mode).lower(), cls.RATES["truck"])
-                costo_final = distancia * tarifa
+                original_cost = float(arc_data.metadata.extras.get("original_cost", 0.0)) if getattr(arc_data, 'metadata', None) and getattr(arc_data.metadata, 'extras', None) else 0.0
+                if original_cost > 0.0:
+                    costo_final = original_cost
+                else:
+                    tarifa = cls.RATES.get(str(mode).lower(), cls.RATES["truck"])
+                    costo_final = distancia * tarifa
 
             # 5. Riesgo
             target_node_risk = fragility_map.get(arc_data.destination, 0.0)
@@ -97,6 +98,15 @@ class GraphAssembler:
                 mode=str(mode),
                 risk=float(risk_prob)
             ))
+
+        # Si se proporcionó un reliability_report, inyectar los pesos preprocesados
+        # en los Edge (una sola pasada). Si falla, registramos la excepción y
+        # continuamos con el grafo sin los pesos.
+        if reliability_report is not None:
+            try:
+                build_weights(b4_edges, reliability_report)
+            except Exception as exc:
+                LOGGER.exception("build_weights failed while assembling graph: %s", exc)
 
         return Graph(
             nodes=b4_nodes,
