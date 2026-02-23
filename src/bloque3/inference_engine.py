@@ -1,15 +1,17 @@
-# src/bloque3/inference_engine.py
 """
-InferenceEngine del Bloque 3.
+InferenceEngine del Bloque III.
 
 Responsabilidad única:
-    - Orquestar auditoría + actualización bayesiana.
-    - Generar ReliabilityReport consumible por el resto del sistema.
-    - NUEVO: Considerar impacto/severidad en cálculos de fragilidad.
+    - Orquestar auditoría y actualización bayesiana.
+    - Consumir y validar el reliability_report() del BayesianJudge.
+    - Exponer hacia Bloque IV los pares (prob_failure, impact_mean) sin combinarlos.
+    - No realizar ninguna fusión de probabilidad e impacto.
 """
 
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
@@ -17,12 +19,14 @@ from .auditor import AuditRecord, FailureCriteria, audit_scenarios
 from .bayesian_judge import BayesianJudge, BetaParams, PriorConfig
 from .reliability_report import ConfidenceInterval, ReliabilityReport
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class InferenceConfig:
     criteria: FailureCriteria = FailureCriteria()
     prior: PriorConfig = PriorConfig()
-    use_impact_in_fragility: bool = True  # NUEVO: Control para usar impacto
+    # Nota: se eliminó use_impact_in_fragility; el bloque III ya no combina P e I.
 
 
 def _beta_variance(params: BetaParams) -> float:
@@ -44,6 +48,7 @@ def _params_to_interval(params: BetaParams) -> ConfidenceInterval:
 
 
 def _component_mean(params: BetaParams | None, prior: PriorConfig) -> float:
+    # kept for future use (not used in process() currently)
     if params is None:
         denom = prior.alpha + prior.beta
         return prior.alpha / denom if denom > 0 else 0.0
@@ -52,10 +57,14 @@ def _component_mean(params: BetaParams | None, prior: PriorConfig) -> float:
 
 class InferenceEngine:
     """
-    Orquesta el Bloque 3:
+    Orquesta el Bloque III:
         - clasifica escenarios (auditor)
         - actualiza parámetros beta (judge)
-        - emite ReliabilityReport
+        - consume reliability_report() del judge y valida su estructura
+        - emite ReliabilityReport con risk_matrix vacío y node_fragility vacío,
+          y añade notas aclaratorias; los pares (prob_failure, impact_mean) se
+          exponen exclusivamente a través del método reliability_report() del judge,
+          que debe ser utilizado directamente por el Bloque IV.
     """
 
     def __init__(self, config: InferenceConfig | None = None) -> None:
@@ -70,9 +79,16 @@ class InferenceEngine:
         node_index: Sequence[str] | None = None,
     ) -> ReliabilityReport:
         """
-        scenarios: iterable de dicts de escenarios.
-        scenario_payloads: info extra opcional (failed_nodes/failed_arcs/node_impacts/arc_impacts).
-        node_index: orden de nodos para construir risk_matrix (si no se pasa, queda vacío).
+        Procesa escenarios, actualiza el judge y devuelve un reporte.
+
+        Nota: risk_matrix y node_fragility se devuelven vacíos, ya que el bloque III
+        no debe combinar probabilidad e impacto. Los pares (prob_failure, impact_mean)
+        están disponibles a través del método reliability_report() del BayesianJudge,
+        que debe ser usado por el Bloque IV para obtener los valores validados por
+        componente.
+
+        El método reliability_report() del judge está envuelto en un bloque try/except
+        para garantizar trazabilidad en caso de fallos inesperados.
         """
         scenario_payloads = scenario_payloads or {}
         audits = audit_scenarios(scenarios, criteria=self._config.criteria)
@@ -84,63 +100,91 @@ class InferenceEngine:
 
         self._judge.batch_observe(batched)
 
+        # 1. Obtener el reporte canónico del judge con wrap defensivo
+        try:
+            report = self._judge.reliability_report()
+        except Exception as e:
+            logger.exception("Unexpected error while calling reliability_report()")
+            raise RuntimeError("Failed to obtain reliability report from BayesianJudge") from e
+
+        # 2. Validar estructura mínima
+        if not isinstance(report, dict) or "edges" not in report or "nodes" not in report:
+            msg = "Invalid reliability_report() structure from BayesianJudge: expected {'edges','nodes'}"
+            logger.error(msg)
+            raise RuntimeError(msg)
+
+        edges_report = report["edges"]
+        nodes_report = report["nodes"]
+
+        if not isinstance(edges_report, dict) or not isinstance(nodes_report, dict):
+            msg = "Invalid reliability_report() types: 'edges' and 'nodes' must be dicts"
+            logger.error(msg)
+            raise RuntimeError(msg)
+
+        # 3. Validar cada arco con normalización de clave y rechazo de NaN/Inf
+        for arc_id, payload in edges_report.items():
+            arc_key = str(arc_id)
+            if not isinstance(payload, Mapping):
+                msg = f"Invalid edge payload for {arc_key}: expected mapping"
+                logger.error(msg)
+                raise RuntimeError(msg)
+            if "prob_failure" not in payload or "impact_mean" not in payload:
+                msg = f"Edge {arc_key} missing required keys 'prob_failure'/'impact_mean'"
+                logger.error(msg)
+                raise RuntimeError(msg)
+            prob = payload["prob_failure"]
+            impact = payload["impact_mean"]
+            if not isinstance(prob, (int, float)) or prob < 0.0 or prob > 1.0:
+                msg = f"Edge {arc_key} prob_failure out of range: {prob}"
+                logger.error(msg)
+                raise ValueError(msg)
+            if not isinstance(impact, (int, float)) or impact < 0.0:
+                msg = f"Edge {arc_key} impact_mean must be non-negative: {impact}"
+                logger.error(msg)
+                raise ValueError(msg)
+            if not math.isfinite(float(prob)):
+                msg = f"Edge {arc_key} prob_failure is not finite: {prob}"
+                logger.error(msg)
+                raise ValueError(msg)
+            if not math.isfinite(float(impact)):
+                msg = f"Edge {arc_key} impact_mean is not finite: {impact}"
+                logger.error(msg)
+                raise ValueError(msg)
+
+        # 4. Validar cada nodo con normalización de clave y rechazo de NaN/Inf
+        for node_id, payload in nodes_report.items():
+            node_key = str(node_id)
+            if not isinstance(payload, Mapping):
+                msg = f"Invalid node payload for {node_key}: expected mapping"
+                logger.error(msg)
+                raise RuntimeError(msg)
+            if "prob_failure" not in payload or "impact_mean" not in payload:
+                msg = f"Node {node_key} missing required keys 'prob_failure'/'impact_mean'"
+                logger.error(msg)
+                raise RuntimeError(msg)
+            prob = payload["prob_failure"]
+            impact = payload["impact_mean"]
+            if not isinstance(prob, (int, float)) or prob < 0.0 or prob > 1.0:
+                msg = f"Node {node_key} prob_failure out of range: {prob}"
+                logger.error(msg)
+                raise ValueError(msg)
+            if not isinstance(impact, (int, float)) or impact < 0.0:
+                msg = f"Node {node_key} impact_mean must be non-negative: {impact}"
+                logger.error(msg)
+                raise ValueError(msg)
+            if not math.isfinite(float(prob)):
+                msg = f"Node {node_key} prob_failure is not finite: {prob}"
+                logger.error(msg)
+                raise ValueError(msg)
+            if not math.isfinite(float(impact)):
+                msg = f"Node {node_key} impact_mean is not finite: {impact}"
+                logger.error(msg)
+                raise ValueError(msg)
+
+        # 5. Construir intervalos de confianza (igual que antes)
         node_params = self._judge.node_params()
         arc_params = self._judge.arc_params()
         system_params = self._judge.system_params()
-
-        # NUEVO: Cálculo de fragilidad CON o SIN impacto
-        node_fragility: List[Tuple[str, float]] = []
-        
-        if self._config.use_impact_in_fragility:
-            # CON IMPACTO: Usar el nuevo método que considera probabilidad × impacto
-            for node_id in (node_index or []):
-                fragility = self._judge.node_fragility_with_impact(node_id)
-                node_fragility.append((node_id, fragility))
-        else:
-            # SIN IMPACTO: Método original (binario)
-            node_reliability = {
-                node_id: _component_mean(node_params.get(node_id), self._config.prior)
-                for node_id in (node_index or [])
-            }
-            # Fragilidad = 1 - confiabilidad
-            node_fragility = [
-                (node_id, 1.0 - reliability) 
-                for node_id, reliability in node_reliability.items()
-            ]
-        
-        # Ordenar por fragilidad (mayor primero)
-        node_fragility.sort(key=lambda x: x[1], reverse=True)
-
-        # NUEVO: Matriz de riesgo usando fragilidad con impacto
-        risk_matrix: List[List[float]] = []
-        if node_index:
-            if self._config.use_impact_in_fragility:
-                # Usar fragilidad con impacto en matriz de riesgo
-                for origin in node_index:
-                    row: List[float] = []
-                    origin_frag = self._judge.node_fragility_with_impact(origin)
-                    for dest in node_index:
-                        dest_frag = self._judge.node_fragility_with_impact(dest)
-                        arc_key = f"{origin}->{dest}"
-                        arc_frag = self._judge.arc_fragility_with_impact(arc_key)
-                        
-                        # Riesgo combinado: probabilidad de que al menos uno falle con impacto
-                        # Fórmula: 1 - (1-frag_origin)*(1-frag_dest)*(1-frag_arc)
-                        combined_risk = 1 - (1-origin_frag)*(1-dest_frag)*(1-arc_frag)
-                        row.append(combined_risk)
-                    risk_matrix.append(row)
-            else:
-                # Método original (sin impacto)
-                system_mean = _component_mean(system_params, self._config.prior)
-                for origin in node_index:
-                    row: List[float] = []
-                    origin_mean = _component_mean(node_params.get(origin), self._config.prior)
-                    for dest in node_index:
-                        dest_mean = _component_mean(node_params.get(dest), self._config.prior)
-                        arc_key = f"{origin}->{dest}"
-                        arc_mean = _component_mean(arc_params.get(arc_key), self._config.prior)
-                        row.append(arc_mean * origin_mean * dest_mean * system_mean)
-                    risk_matrix.append(row)
 
         confidence_interval: Dict[str, ConfidenceInterval] = {
             **{f"node:{nid}": _params_to_interval(params) for nid, params in node_params.items()},
@@ -148,11 +192,18 @@ class InferenceEngine:
             "system": _params_to_interval(system_params),
         }
 
+        # 6. Preparar el reporte final: risk_matrix y node_fragility vacíos
+        risk_matrix: List[List[float]] = []  # vacío por diseño
+        node_fragility: List[Tuple[str, float]] = []  # vacío por diseño
+
         notes = [
-            f"risk_matrix usando {'impacto+probabilidad' if self._config.use_impact_in_fragility else 'confiabilidad binaria'}.",
-            f"node_fragility calculada con {'impacto' if self._config.use_impact_in_fragility else '(1 - confiabilidad)'}.",
-            "Para usar impacto, asegurar que scenario_payloads incluya node_impacts/arc_impacts.",
+            "Reliability report consumed from BayesianJudge; P(F) and impact_mean are exposed separately.",
+            "No fusion of probability and impact performed in Block III; downstream blocks must decide how to combine.",
+            "risk_matrix and node_fragility are left empty intentionally. Use BayesianJudge.reliability_report() directly.",
         ]
+
+        # NOTE: risk_matrix and node_fragility intentionally empty; downstream must use
+        # BayesianJudge.reliability_report() for (prob_failure, impact_mean) pairs.
 
         return ReliabilityReport(
             risk_matrix=risk_matrix,
