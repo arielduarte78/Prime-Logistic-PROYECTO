@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Dict, Any
 import math
 
 from .schema import RawSolution
+
+LOGGER = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class ParetoSolution:
@@ -37,26 +41,43 @@ class ParetoFrontResult:
     solutions: List[ParetoSolution] = field(default_factory=list)
 
     @classmethod
-    def from_labels(cls, labels: Sequence, engine) -> "ParetoFrontResult":
+    def from_labels(cls, labels: Sequence, engine: Any) -> "ParetoFrontResult":
         """
         Construye ParetoFrontResult a partir de una lista de Label y un engine que
         provea reconstruct_path(label) -> RawSolution.
+
+        Esta implementación es defensiva: si la reconstrucción falla para una etiqueta,
+        se registra y se omite esa etiqueta en lugar de romper todo el proceso.
         """
         sols: List[ParetoSolution] = []
-        for lbl in labels:
-            raw: RawSolution = engine.reconstruct_path(lbl)
-            sols.append(
-                ParetoSolution(
-                    path=tuple(raw.path),
-                    edges=tuple(raw.edges),
-                    total_cost=float(raw.total_cost),
-                    optimized_cost=float(raw.optimized_cost),
-                    total_time=float(raw.total_time),
-                    total_risk=float(raw.total_risk),
-                    w_survival=float(lbl.w_survival),
-                    w_expected_cost=float(lbl.w_expected_cost),
+        for lbl in labels or []:
+            try:
+                raw: RawSolution = engine.reconstruct_path(lbl)
+            except Exception as exc:
+                LOGGER.exception("Failed to reconstruct RawSolution from label: %s", exc)
+                continue
+
+            # Defensive extraction of label numeric axes
+            w_surv = float(getattr(lbl, "w_survival", getattr(lbl, "cum_risk_weight", 0.0) or 0.0))
+            w_exp = float(getattr(lbl, "w_expected_cost", getattr(lbl, "cum_cost", 0.0) or 0.0))
+
+            try:
+                sols.append(
+                    ParetoSolution(
+                        path=tuple(getattr(raw, "path", []) or []),
+                        edges=tuple(getattr(raw, "edges", []) or []),
+                        total_cost=float(getattr(raw, "total_cost", 0.0)),
+                        optimized_cost=float(getattr(raw, "optimized_cost", getattr(raw, "total_cost", 0.0))),
+                        total_time=float(getattr(raw, "total_time", 0.0)),
+                        total_risk=float(getattr(raw, "total_risk", 0.0)),
+                        w_survival=w_surv,
+                        w_expected_cost=w_exp,
+                    )
                 )
-            )
+            except Exception:
+                LOGGER.exception("Invalid RawSolution structure for label; skipping.")
+                continue
+
         return cls(solutions=sols)
 
     def _extremes(self) -> Optional[Dict[str, float]]:
@@ -123,9 +144,13 @@ class ParetoFrontResult:
         gambler = self.extract_gambler()
         if tank is None or gambler is None:
             return None
-        if gambler.total_cost == 0:
+        try:
+            if float(gambler.total_cost) == 0.0:
+                return None
+            overcost = (float(tank.total_cost) - float(gambler.total_cost)) / float(gambler.total_cost)
+        except Exception:
+            LOGGER.exception("Error calculando overcost for unicorn detection.")
             return None
-        overcost = (tank.total_cost - gambler.total_cost) / gambler.total_cost
         if overcost >= overcost_threshold:
             return tank
         return None

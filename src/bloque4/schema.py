@@ -28,9 +28,15 @@ class RouteProfile:
     redundancy_index: float = 0.0
     sensitivity_vector: "Dict[str, float]" = field(default_factory=dict)
 
-@dataclass(frozen=True)
+@dataclass
 class Node:
+    """
+    Nodo del grafo. Lat/lon son opcionales para permitir ensambladores que
+    construyan nodos mínimos o que provengan de indexers externos.
+    """
     node_id: str
+    lat: Optional[float] = None
+    lon: Optional[float] = None
 
 @dataclass
 class Edge:
@@ -39,7 +45,7 @@ class Edge:
     target: str
     cost: float
     distance: float
-    mode: str  
+    mode: str
     time: float = 0.0
     capacity: Optional[float] = None
     risk: Optional[float] = None
@@ -87,10 +93,11 @@ class RawSolution:
     total_risk: float
 
     def __post_init__(self) -> None:
-        if not self.edges:
-            raise ValueError("La solución debe contener al menos un arco.")
-        if self.path and len(self.path) != len(self.edges) + 1:
-            raise ValueError("Inconsistencia topológica: path != edges + 1")
+        # Permitimos soluciones vacías (se usan como fallback en el orquestador).
+        # Validamos consistencia topológica solo si hay arcos.
+        if self.edges:
+            if self.path and len(self.path) != len(self.edges) + 1:
+                raise ValueError("Inconsistencia topológica: path != edges + 1")
 
 @dataclass
 class StrategicOption:

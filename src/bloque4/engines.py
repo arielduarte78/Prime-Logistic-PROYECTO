@@ -78,8 +78,15 @@ def _apply_risk_to_graph(
 
 class DijkstraEngine(OptimizationEngine):
     """
-    (Removed) This engine has been replaced by the multiobjective engine.
+    Compatibility wrapper for legacy code that may still instantiate DijkstraEngine
+    with keyword arguments. The scalar Dijkstra solver was removed; solve still
+    raises NotImplementedError to direct users to the multiobjective engine.
     """
+    def __init__(self, *args, **kwargs):
+        # Accept arbitrary kwargs for backward compatibility (eps_1, eps_2, etc.)
+        # Store them for debugging if needed.
+        self._init_kwargs = kwargs
+
     def solve(self, graph: Graph, phi_vector: np.ndarray, config: OptimizerConfig) -> RawSolution:
         raise NotImplementedError(
             "Scalar Dijkstra engine removed. Use src.bloque4.multiobjective_engine.MultiObjectiveEngine."
@@ -237,6 +244,7 @@ def _validate_risk_transform() -> None:
 
 
 # NOTE
-# The scalar adjacency builder and motor multiobjetivo pathfinder were removed intentionally.
-# Multiobjective routing must be implemented in src.bloque4/multiobjective_engine.py.
-# Keep this file focused on risk transform and validation helpers only.
+# Keep this module focused on risk transform and validation helpers only.
+# Multiobjective routing is implemented in src/bloque4/multiobjective_engine.py.
+# The DijkstraEngine class accepts arbitrary kwargs for backward compatibility
+# but its solve method intentionally raises NotImplementedError.
