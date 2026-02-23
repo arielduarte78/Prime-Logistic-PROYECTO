@@ -1,4 +1,3 @@
-#schema.py
 from __future__ import annotations
 import math
 import logging
@@ -33,7 +32,7 @@ class RouteProfile:
 class Node:
     node_id: str
 
-@dataclass(frozen=True)
+@dataclass
 class Edge:
     edge_id: str
     source: str
@@ -45,6 +44,9 @@ class Edge:
     capacity: Optional[float] = None
     risk: Optional[float] = None
     risk_weight: Optional[float] = None
+    # Bloque IV weights (preprocesadas por weight_builder)
+    w_survival: float = 0.0
+    w_expected_cost: float = 0.0
 
     def __post_init__(self) -> None:
         if self.cost < 0:
@@ -130,4 +132,3 @@ class OptimizerConfig:
             raise ValueError(f"Kappa {self.kappa} fuera de límites operativos.")
         if not math.isclose(sum(self.rigidity_weights), 1.0, rel_tol=1e-5):
             LOGGER.warning("Pesos de rigidez no normalizados. Resultado escalar puede ser inconsistente.")
-
