@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-# main.py - Orquestador maestro (versión robusta)
+# main.py - Orquestador maestro (versión robusta con motor multiobjetivo)
 from __future__ import annotations
 
 import os
 import sys
 import logging
 import pickle
-from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import numpy as np
+
+# --- INYECCIÓN DE RUTA ESTRUCTURAL ---
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
 # Bloques del proyecto
 from bloque1.network import NetworkIndexer, Ingestor
@@ -19,16 +21,12 @@ from bloque2.integration import StochasticNetworkPipeline
 from bloque3.inference_engine import InferenceEngine, InferenceConfig
 from bloque3.bayesian_judge import PriorConfig
 from bloque3.auditor import FailureCriteria
-from bloque4.profiler import profile_route
-from bloque4.selector import select_strategic_options
-from bloque4.report import PrimeStrategicReporter, RenderProfile
-from bloque4.schema import OptimizerConfig, Edge
+from bloque4.report import PrimeStrategicReporter, RenderProfile, build_strategic_options_from_frontier
+from bloque4.schema import OptimizerConfig
 from bloque4.assembler import GraphAssembler
 from bloque4.weight_builder import build_edge_weights
 from bloque4.config import Stage5Config
 from bloque4.multiobjective_engine import MultiObjectiveEngine
-from bloque4.utils import normalize_solution
-
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -45,15 +43,15 @@ def ejecutar_pipeline():
         nombre_archivo = sys.argv[1]
     else:
         nombre_archivo = "red_realista_argentina.xlsx"
-        print(f"⚠ No se especificó archivo. Usando default: {nombre_archivo}")
+        logger.info("⚠ No se especificó archivo. Usando default: %s", nombre_archivo)
 
-    print("\n" + "=" * 80)
-    print(f"PRIME LOGISTICS - EJECUCIÓN MAESTRA: {nombre_archivo.upper()}")
-    print("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info("PRIME LOGISTICS - EJECUCIÓN MAESTRA: %s", nombre_archivo.upper())
+    logger.info("=" * 80)
 
     excel_path = os.path.join(base_path, "data", nombre_archivo)
     if not os.path.exists(excel_path):
-        print(f"❌ ERROR: No existe {excel_path}")
+        logger.error("❌ ERROR: No existe %s", excel_path)
         sys.exit(1)
 
     # Conversión a parquet (si existe)
@@ -63,6 +61,7 @@ def ejecutar_pipeline():
     except Exception:
         # Fallback simple: leer directo con pandas
         import pandas as pd
+        logger.info("Conversión a parquet no disponible; leyendo Excel directamente...")
         df_nodes = pd.read_excel(excel_path, sheet_name="NODES")
         df_arcs = pd.read_excel(excel_path, sheet_name="ARCS")
         p_nodes = os.path.join(base_path, "tmp_nodes.parquet")
@@ -77,7 +76,7 @@ def ejecutar_pipeline():
     indexer = NetworkIndexer()
     ingestor = Ingestor(indexer)
 
-    print(f"   [BLOQUE 1] Ingestando topología: {len(df_n)} nodos, {len(df_a)} arcos...")
+    logger.info("   [BLOQUE 1] Ingestando topología: %d nodos, %d arcos...", len(df_n), len(df_a))
 
     for record in df_n.to_dict("records"):
         clean_node = {
@@ -105,7 +104,7 @@ def ejecutar_pipeline():
         ingestor.load_arc(clean_arc)
 
     if indexer.arc_count == 0:
-        print("\n❌ ERROR CRÍTICO: 0 Arcos cargados.")
+        logger.error("❌ ERROR CRÍTICO: 0 Arcos cargados.")
         return
 
     tb = TopologyBuilder(indexer)
@@ -115,13 +114,13 @@ def ejecutar_pipeline():
     node_ids = list(topology_package["nodes"])
     start_node, end_node = node_ids[0], node_ids[-1]
 
-    print(f"   ✓ Topología lista: {len(node_ids)} nodos y {len(indexer._arcs)} arcos.")
-    print(f"   ✓ Ruta Objetivo: {start_node} ➔ {end_node}")
+    logger.info("   ✓ Topología lista: %d nodos y %d arcos.", len(node_ids), len(indexer._arcs))
+    logger.info("   ✓ Ruta Objetivo: %s ➔ %s", start_node, end_node)
 
     # -------------------------
     # Motor de riesgo (Bloque 2)
     # -------------------------
-    print("\n2. Ejecutando Motor de Riesgo (Convergencia Automática)...")
+    logger.info("\n2. Ejecutando Motor de Riesgo (Convergencia Automática)...")
     pipeline = StochasticNetworkPipeline(seed=42)
     pipeline.load_topology_from_bloque1(topology_package)
     manifest_path = os.path.join(src_path, "bloque2", "manifest.yaml")
@@ -131,9 +130,10 @@ def ejecutar_pipeline():
     stats = ScenarioAnalyzer.compute_statistics(scenarios)
     worst = ScenarioAnalyzer.get_worst_case_scenario(scenarios)
 
-    print(f"   [RESULTADOS] Escenarios Simulados: {stats.get('n_scenarios', len(scenarios))}")
-    print(f"   [RESULTADOS] Pérdida Promedio: {stats.get('avg_capacity_loss', 0.0)*100:.2f}%")
-    print(f"   [CRITICAL] Peor escenario: ID {worst.get('scenario_id', 'N/A')} (Retención: {worst.get('capacity_retained', 0.0)*100:.1f}%)")
+    logger.info("   [RESULTADOS] Escenarios Simulados: %d", stats.get('n_scenarios', len(scenarios)))
+    logger.info("   [RESULTADOS] Pérdida Promedio: %.2f%%", stats.get('avg_capacity_loss', 0.0)*100)
+    logger.info("   [CRITICAL] Peor escenario: ID %s (Retención: %.1f%%)",
+                worst.get('scenario_id', 'N/A'), worst.get('capacity_retained', 0.0)*100)
 
     # Guardado de seguridad
     output_dir = os.path.join(base_path, "output")
@@ -141,12 +141,12 @@ def ejecutar_pipeline():
     ruta_pkl = os.path.join(output_dir, "scenarios.pkl")
     with open(ruta_pkl, "wb") as f:
         pickle.dump(scenarios, f)
-    print(f"✅ Archivo de escenarios guardado en: {ruta_pkl}")
+    logger.info("✅ Archivo de escenarios guardado en: %s", ruta_pkl)
 
     # -------------------------
     # Auditoría Bayesiana (Bloque 3)
     # -------------------------
-    print("\n3. Ejecutando Auditoría Bayesiana...")
+    logger.info("\n3. Ejecutando Auditoría Bayesiana...")
     config_prime = InferenceConfig(
         criteria=FailureCriteria(min_capacity_retained=0.85),
         prior=PriorConfig(alpha=9, beta=1),
@@ -181,9 +181,9 @@ def ejecutar_pipeline():
     report = engine.process(scenarios=scenarios_for_audit, scenario_payloads=payloads, node_index=node_ids)
 
     # -------------------------
-    # Bloque 4: ensamblado y pesos
+    # Bloque 4: ensamblado, pesos y optimización multiobjetivo
     # -------------------------
-    print("\n4. Ejecutando Prime Optimizer (Barrido de Estrategias)...")
+    logger.info("\n4. Ejecutando Prime Optimizer (Frontera de Pareto)...")
     total_nodos = len(node_ids)
     all_fragilities = report.top_fragile_nodes(total_nodos)
     fragility_map = dict(all_fragilities) if all_fragilities else {nid: 0.0 for nid in node_ids}
@@ -202,97 +202,69 @@ def ejecutar_pipeline():
     # Precalculo de pesos por arco
     build_edge_weights(prime_graph.edges, prime_graph.reliability_report)
 
-    # Construir ordered_edges respetando edge_indexer
-    ordered_edges: List[Optional[Edge]] = [None] * len(prime_graph.edges)
-    fallback_edges: List[Edge] = []
-    if hasattr(prime_graph, "edge_indexer") and isinstance(prime_graph.edge_indexer, dict):
-        for e in prime_graph.edges:
-            idx = prime_graph.edge_indexer.get(str(e.edge_id))
-            if idx is None or not (0 <= idx < len(ordered_edges)):
-                fallback_edges.append(e)
-            else:
-                ordered_edges[idx] = e
-        # rellenar huecos con fallback_edges
-        fill_iter = iter(fallback_edges)
-        for i in range(len(ordered_edges)):
-            if ordered_edges[i] is None:
-                try:
-                    ordered_edges[i] = next(fill_iter)
-                except StopIteration:
-                    ordered_edges[i] = None
-        ordered_edges = [e for e in ordered_edges if e is not None]
-    else:
-        ordered_edges = list(prime_graph.edges)
+    # Construir vectores de pesos para posibles usos (necesarios para la firma alternativa de solve)
+    w_survival_vec = np.array([getattr(e, "w_survival", 0.0) for e in prime_graph.edges], dtype=float)
+    w_expected_vec = np.array([getattr(e, "w_expected_cost", float(getattr(e, "cost", 0.0))) for e in prime_graph.edges], dtype=float)
 
-    w_survival_vec = np.array([getattr(e, "w_survival", 0.0) for e in ordered_edges], dtype=float)
-    w_expected_vec = np.array([getattr(e, "w_expected_cost", float(getattr(e, "cost", 0.0))) for e in ordered_edges], dtype=float)
-
-    # Configuración motor multiobjetivo
-    cfg_stage5 = Stage5Config(eps_1=0.001, eps_2=1.0)
+    # Configuración motor multiobjetivo (una sola instancia)
+    cfg_stage5 = Stage5Config(eps_1=0.001, eps_2=500.0)
     try:
         engine_b4 = MultiObjectiveEngine(
             eps_1=cfg_stage5.eps_1,
             eps_2=cfg_stage5.eps_2,
-            max_labels_per_node=1000,
-            max_total_labels=100000,
+            max_labels_per_node=getattr(cfg_stage5, "max_labels_per_node", 1000),
+            max_total_labels=getattr(cfg_stage5, "max_total_labels", 100000),
             max_iterations=getattr(cfg_stage5, "max_iterations", 1000000)
         )
     except TypeError:
+        logger.warning("Fallback: creando MultiObjectiveEngine sin parámetros")
         engine_b4 = MultiObjectiveEngine()
 
-    k_strategies = [0.0, 10.0, 50.0]
-    solutions_found: List[SimpleNamespace] = []
-    profiles_found: List[Any] = []
-    configs_found: List[OptimizerConfig] = []
+    # Verificar que la función de transformación esté disponible
+    try:
+        # Check que build_strategic_options_from_frontier existe (importada)
+        assert callable(build_strategic_options_from_frontier)
+    except (NameError, AssertionError):
+        raise RuntimeError("build_strategic_options_from_frontier no disponible en bloque4.report")
 
-    for k in k_strategies:
-        print(f"   -> Calculando ruta óptima para Kappa={k}...")
-        config_iter = OptimizerConfig(
-            source_node_id=start_node, target_node_id=end_node,
-            kappa=k,
-            cost_weight=0.6, risk_weight=0.4, entropy_weight=0.1
-        )
-
+    # Obtener la frontera de Pareto (intentar varias firmas de solve)
+    pareto_labels = None
+    try:
+        pareto_labels = engine_b4.solve(prime_graph, source=start_node, target=end_node)
+    except TypeError:
         try:
-            # Intentar varias firmas de solve de forma defensiva
-            sol = None
-            try:
-                sol = engine_b4.solve(prime_graph, w_survival_vec, w_expected_vec, config_iter)
-            except TypeError:
-                try:
-                    sol = engine_b4.solve(prime_graph, source=start_node, target=end_node, config=config_iter)
-                except TypeError:
-                    sol = engine_b4.solve(prime_graph, start_node, end_node)
-
-            if sol:
-                sol_norm = normalize_solution(sol, prime_graph, ordered_edges)
-                prof = profile_route(prime_graph, sol_norm, config_iter)
-                solutions_found.append(sol_norm)
-                profiles_found.append(prof)
-                configs_found.append(config_iter)
-            else:
-                print(f"      [WARN] No hubo ruta viable para k={k}")
-        except Exception:
-            logger.exception("Fallo inesperado en cálculo k=%s", k)
+            pareto_labels = engine_b4.solve(prime_graph, w_survival_vec, w_expected_vec, config=OptimizerConfig(
+                source_node_id=start_node, target_node_id=end_node, kappa=0.0))
+        except Exception as exc:
+            logger.exception("MultiObjectiveEngine.solve failed: %s", exc)
             raise
 
-    # Selección y reporte
-    if solutions_found:
-        index_master = 1 if len(solutions_found) > 1 else 0
-        master_config = configs_found[index_master]
+    if pareto_labels:
+        # Configuración base para el reporte (se puede ajustar)
+        master_config = OptimizerConfig(
+            source_node_id=start_node,
+            target_node_id=end_node,
+            kappa=0.0,  # no utilizado por el motor multiobjetivo
+            cost_weight=0.6,
+            risk_weight=0.4,
+            entropy_weight=0.1,
+            # valores por defecto para los umbrales, etc.
+        )
 
-        strategic_options = select_strategic_options(solutions_found, profiles_found, master_config)
+        # Construir opciones estratégicas a partir de la frontera
+        strategic_options = build_strategic_options_from_frontier(pareto_labels, engine_b4, master_config)
+
+        # Generar reporte
         reporter = PrimeStrategicReporter(master_config, RenderProfile(use_emojis=True))
-
-        print("\n" + "#" * 65)
+        logger.info("\n" + "#" * 65)
         report_text = reporter.generate_full_report(strategic_options)
-        print(report_text)
-        print("#" * 65 + "\n")
+        print(report_text)  # Se mantiene print para la salida legible por el usuario
+        logger.info("#" * 65 + "\n")
 
         with open(os.path.join(output_dir, "reporte_estrategico.txt"), "w", encoding="utf-8") as f:
             f.write(report_text)
     else:
-        print("❌ CRÍTICO: El sistema no pudo conectar el origen con el destino bajo ninguna estrategia.")
+        logger.error("❌ CRÍTICO: El motor multiobjetivo no encontró rutas entre origen y destino.")
 
 
 if __name__ == "__main__":

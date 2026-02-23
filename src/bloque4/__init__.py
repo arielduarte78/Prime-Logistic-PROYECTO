@@ -17,7 +17,7 @@ from .engines import (
     TabuSearchEngine,
 )
 from .profiler import profile_route
-from .selector import select_strategic_options
+
 
 __all__ = [
     "Edge",
@@ -34,5 +34,4 @@ __all__ = [
     "SimulatedAnnealingEngine",
     "GeneticEngine",
     "profile_route",
-    "select_strategic_options",
 ]
