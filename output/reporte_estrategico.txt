@@ -1,61 +1,23 @@
 =============================================================
 🚛 PRIME LOGISTICS INTELLIGENCE | REPORTE DE ESTRATEGIA
-   Configuración: κ=10.0 | Top-3 Análisis
+   Configuración: κ=0.0 | Top-3 Análisis
    🦄 ESCENARIO: EXCEPCIONAL. Anomalías de eficiencia detectadas.
 =============================================================
 
 
 ┌─────────────────────────────────────────────────────────────┐
 │ OPCIÓN #1 | 🦄 EL UNICORNIO OPERATIVO (Dominancia Total)
-│ Confianza del Sistema: 50.00%
+│ Confianza del Sistema: 45.93%
 └─────────────────────────────────────────────────────────────┘
   
   [EL DIAGNÓSTICO]
   "Anomalía positiva detectada. Minimiza costo financiero SIN sacrificar integridad."
 
   [MÉTRICAS DE DECISIÓN]
-  • 💰 Inversión Total:      $154,993.90
+  • 💰 Inversión Total:      $10.80
   • 🛡️ Costo de Seguridad:   Incluido
-  • 🏗️ Índice de Rigidez:    0.0000
-  • 🌌 Entropía Relativa:    0.00 (Riesgo Concentrado)
-
-  [VERDICTO TÁCTICO]
-  ➜ ACCIÓN: Ejecutar de inmediato. Oportunidad de mercado.
-
-
-
-┌─────────────────────────────────────────────────────────────┐
-│ OPCIÓN #2 | 🦄 EL UNICORNIO OPERATIVO (Dominancia Total)
-│ Confianza del Sistema: 50.00%
-└─────────────────────────────────────────────────────────────┘
-  
-  [EL DIAGNÓSTICO]
-  "Anomalía positiva detectada. Minimiza costo financiero SIN sacrificar integridad."
-
-  [MÉTRICAS DE DECISIÓN]
-  • 💰 Inversión Total:      $154,993.90
-  • 🛡️ Costo de Seguridad:   Incluido
-  • 🏗️ Índice de Rigidez:    0.0000
-  • 🌌 Entropía Relativa:    0.00 (Riesgo Concentrado)
-
-  [VERDICTO TÁCTICO]
-  ➜ ACCIÓN: Ejecutar de inmediato. Oportunidad de mercado.
-
-
-
-┌─────────────────────────────────────────────────────────────┐
-│ OPCIÓN #3 | 🦄 EL UNICORNIO OPERATIVO (Dominancia Total)
-│ Confianza del Sistema: 50.00%
-└─────────────────────────────────────────────────────────────┘
-  
-  [EL DIAGNÓSTICO]
-  "Anomalía positiva detectada. Minimiza costo financiero SIN sacrificar integridad."
-
-  [MÉTRICAS DE DECISIÓN]
-  • 💰 Inversión Total:      $154,993.90
-  • 🛡️ Costo de Seguridad:   Incluido
-  • 🏗️ Índice de Rigidez:    0.0000
-  • 🌌 Entropía Relativa:    0.00 (Riesgo Concentrado)
+  • 🏗️ Índice de Rigidez:    0.0847
+  • 🌌 Entropía Relativa:    0.92 (Riesgo Distribuido)
 
   [VERDICTO TÁCTICO]
   ➜ ACCIÓN: Ejecutar de inmediato. Oportunidad de mercado.
@@ -65,5 +27,5 @@
 =============================================================
 🏁 CONCLUSIÓN FINAL:
 El sistema sugiere la OPCIÓN #1 (THE_UNICORN) 
-con una certeza del 50.00%.
+con una certeza del 45.93%.
 =============================================================
