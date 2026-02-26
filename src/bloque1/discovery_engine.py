@@ -1,0 +1,453 @@
+# src/bloque1/discovery_engine.py
+"""
+Motor de Descubrimiento Autónomo — Prime Logistics v1.3.5.
+
+Recibe Nodos (infraestructura) y Flota (recursos) y descubre todas las
+conexiones viables aplicando un embudo de 3 filtros progresivos:
+
+  Filtro 1 — Compatibilidad Semántica (microsegundos)
+  Filtro 2 — Heurística de Rango Geodético (vectorizado, milisegundos)
+  Filtro 3 — Validación Física OSMnx (Fase 3 — NO implementado aquí)
+
+Restricciones de ingeniería honradas:
+  • Filtro 2 usa scipy.spatial.distance.cdist con coordenadas en radianes.
+    CERO bucles for de Python para cálculo de distancias.
+  • Safety Factors importados de config.py.
+  • Este módulo NO toca SmartLazyIngestor ni OSMnx.
+"""
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+from scipy.spatial.distance import cdist
+
+from .config import SAFETY_FACTORS
+from .fleet_schema import FleetVehicle
+from .models import NodeRecord
+
+logger = logging.getLogger(__name__)
+
+# Radio de la Tierra en km (constante WGS-84 estándar)
+_EARTH_RADIUS_KM: float = 6371.0
+
+
+# =====================================================================
+# ESTRUCTURAS DE SALIDA
+# =====================================================================
+
+@dataclass
+class DiscoveredCandidate:
+    """
+    Representa un par (origen, destino, vehículo) que sobrevivió a los
+    Filtros 1 y 2 y es candidato para validación física (Filtro 3).
+
+    Attributes
+    ----------
+    origin : NodeRecord
+        Nodo de origen.
+    destination : NodeRecord
+        Nodo de destino.
+    vehicle : FleetVehicle
+        Perfil de vehículo asociado a esta conexión.
+    estimated_distance_km : float
+        Distancia Haversine (línea recta) en km.
+        Nota: es una subestimación de la distancia real por carretera.
+    """
+    origin: NodeRecord
+    destination: NodeRecord
+    vehicle: FleetVehicle
+    estimated_distance_km: float
+
+    def as_tuple(self) -> Tuple[str, str, str, float]:
+        """Retorna (origin_id, dest_id, vehicle_mode, distance_km)."""
+        vid = self.vehicle.vehicle_id or self.vehicle.mode
+        return (self.origin.id, self.destination.id, vid, self.estimated_distance_km)
+
+
+@dataclass
+class PipelineTelemetry:
+    """
+    Registro de supervivencia del embudo de descubrimiento.
+
+    Permite auditar cuántos candidatos fueron generados, cuántos
+    sobrevivieron cada filtro, y el tiempo de ejecución.
+
+    Attributes
+    ----------
+    total_input_pairs : int
+        Pares totales generados: N × N × M (excluyendo self-loops).
+    filter_1_survivors : int
+        Pares que pasaron compatibilidad semántica.
+    filter_2_survivors : int
+        Pares que pasaron la heurística de rango geodético.
+    filter_1_time_ms : float
+        Tiempo de ejecución del Filtro 1 en milisegundos.
+    filter_2_time_ms : float
+        Tiempo de ejecución del Filtro 2 en milisegundos.
+    total_time_ms : float
+        Tiempo total del pipeline Filtros 1+2.
+    vehicles_processed : int
+        Cantidad de perfiles de vehículo evaluados.
+    zonal_errors : Dict[str, int]
+        Reservado para Filtro 3: log de errores OSMnx por zona geográfica.
+    """
+    total_input_pairs: int = 0
+    filter_1_survivors: int = 0
+    filter_2_survivors: int = 0
+    filter_1_time_ms: float = 0.0
+    filter_2_time_ms: float = 0.0
+    total_time_ms: float = 0.0
+    vehicles_processed: int = 0
+    zonal_errors: Dict[str, int] = field(default_factory=dict)
+
+    def summary(self) -> str:
+        """Genera un informe legible del embudo."""
+        f1_rate = (
+            f"{self.filter_1_survivors / self.total_input_pairs * 100:.1f}%"
+            if self.total_input_pairs > 0 else "N/A"
+        )
+        f2_rate = (
+            f"{self.filter_2_survivors / self.filter_1_survivors * 100:.1f}%"
+            if self.filter_1_survivors > 0 else "N/A"
+        )
+        overall = (
+            f"{self.filter_2_survivors / self.total_input_pairs * 100:.2f}%"
+            if self.total_input_pairs > 0 else "N/A"
+        )
+        return (
+            f"═══ Discovery Pipeline Telemetry ═══\n"
+            f"  Vehículos evaluados : {self.vehicles_processed}\n"
+            f"  Total pares entrada : {self.total_input_pairs:,}\n"
+            f"  Filtro 1 (Semántico): {self.filter_1_survivors:,}  ({f1_rate} pasan)\n"
+            f"  Filtro 2 (Rango)    : {self.filter_2_survivors:,}  ({f2_rate} pasan)\n"
+            f"  Tasa supervivencia  : {overall}\n"
+            f"  Tiempo F1           : {self.filter_1_time_ms:.1f} ms\n"
+            f"  Tiempo F2           : {self.filter_2_time_ms:.1f} ms\n"
+            f"  Tiempo total        : {self.total_time_ms:.1f} ms\n"
+            f"════════════════════════════════════"
+        )
+
+
+# =====================================================================
+# FUNCIÓN DE DISTANCIA HAVERSINE PARA cdist
+# =====================================================================
+
+def _haversine_rad(u: np.ndarray, v: np.ndarray) -> float:
+    """
+    Distancia Haversine entre dos puntos (lat_rad, lon_rad).
+
+    Diseñada como métrica personalizada para scipy.spatial.distance.cdist.
+    Recibe arrays de 2 elementos: [lat_rad, lon_rad].
+    Retorna distancia en kilómetros.
+    """
+    dlat = v[0] - u[0]
+    dlon = v[1] - u[1]
+    a = np.sin(dlat * 0.5) ** 2 + np.cos(u[0]) * np.cos(v[0]) * np.sin(dlon * 0.5) ** 2
+    return _EARTH_RADIUS_KM * 2.0 * np.arcsin(np.sqrt(a))
+
+
+# =====================================================================
+# MOTOR DE DESCUBRIMIENTO
+# =====================================================================
+
+class DiscoveryEngine:
+    """
+    Motor de descubrimiento de conexiones logísticas viables.
+
+    Recibe nodos (infraestructura) y flota (recursos), y ejecuta un
+    embudo de filtros progresivos para encontrar todos los pares
+    (origen, destino, vehículo) que podrían formar arcos válidos.
+
+    Uso
+    ---
+        engine = DiscoveryEngine(nodes, fleet)
+        candidates, telemetry = engine.run_filters_1_2()
+
+    Notas
+    -----
+    - Este motor NO ejecuta el Filtro 3 (validación física OSMnx).
+    - El Filtro 2 utiliza `scipy.spatial.distance.cdist` para computar
+      la matriz de distancias Haversine de N×N en un solo bloque C.
+    - No se usan bucles `for` nativos de Python para distancias.
+    """
+
+    def __init__(
+        self,
+        nodes: Sequence[NodeRecord],
+        fleet: Sequence[FleetVehicle],
+    ) -> None:
+        if not nodes:
+            raise ValueError("Se requiere al menos un nodo para el descubrimiento.")
+        if not fleet:
+            raise ValueError("Se requiere al menos un vehículo de flota.")
+
+        self._nodes: List[NodeRecord] = list(nodes)
+        self._fleet: List[FleetVehicle] = list(fleet)
+
+        # Pre-computar la matriz de distancias Haversine (N×N) una sola vez.
+        # Esto se reutiliza para todos los vehículos.
+        self._dist_matrix: Optional[np.ndarray] = None
+        self._node_index: Dict[str, int] = {n.id: i for i, n in enumerate(self._nodes)}
+
+    @property
+    def node_count(self) -> int:
+        return len(self._nodes)
+
+    @property
+    def fleet_count(self) -> int:
+        return len(self._fleet)
+
+    # -----------------------------------------------------------------
+    # MATRIZ DE DISTANCIAS (cdist — vectorizado puro)
+    # -----------------------------------------------------------------
+
+    def _compute_distance_matrix(self) -> np.ndarray:
+        """
+        Calcula la matriz de distancias Haversine N×N usando cdist.
+
+        Convierte coordenadas a radianes y delega en
+        scipy.spatial.distance.cdist con métrica Haversine personalizada.
+        La iteración de pares ocurre en código C compilado de SciPy,
+        NO en bucles for de Python.
+
+        Returns
+        -------
+        np.ndarray
+            Matriz (N, N) de distancias en kilómetros.
+        """
+        if self._dist_matrix is not None:
+            return self._dist_matrix
+
+        n = len(self._nodes)
+        logger.info(
+            "Calculando matriz de distancias Haversine %dx%d via cdist...", n, n
+        )
+
+        # Extraer coordenadas y convertir a radianes
+        coords_deg = np.array(
+            [(node.lat, node.lon) for node in self._nodes],
+            dtype=np.float64,
+        )
+        coords_rad = np.radians(coords_deg)
+
+        # cdist: una sola llamada, todo el cálculo en bloque de memoria C.
+        # La función _haversine_rad se invoca desde C para cada par.
+        self._dist_matrix = cdist(coords_rad, coords_rad, metric=_haversine_rad)
+
+        logger.info(
+            "Matriz de distancias calculada: %.0f pares en bloque C.",
+            n * n,
+        )
+        return self._dist_matrix
+
+    # -----------------------------------------------------------------
+    # FILTRO 1: COMPATIBILIDAD SEMÁNTICA
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _filter_1_semantic(
+        nodes: List[NodeRecord],
+        vehicle: FleetVehicle,
+    ) -> np.ndarray:
+        """
+        Filtro 1 — Compatibilidad Semántica.
+
+        Para cada par (i, j) con i ≠ j, verifica que:
+          - nodes[i].station_type ∈ vehicle.allowed_stations  (origen)
+          - nodes[j].station_type ∈ vehicle.allowed_stations  (destino)
+
+        Usa operaciones vectorizadas NumPy (broadcasting booleano).
+        No itera pares con for.
+
+        Parameters
+        ----------
+        nodes : List[NodeRecord]
+            Lista de nodos con station_type ya normalizado.
+        vehicle : FleetVehicle
+            Vehículo cuyas allowed_stations definen compatibilidad.
+
+        Returns
+        -------
+        np.ndarray
+            Máscara booleana (N, N) donde True = par semánticamente
+            compatible. Diagonal siempre False (sin self-loops).
+        """
+        allowed = frozenset(vehicle.allowed_stations)
+        n = len(nodes)
+
+        # Vector booleano: ¿nodo i es compatible con este vehículo?
+        compat = np.array(
+            [node.station_type in allowed for node in nodes],
+            dtype=np.bool_,
+        )
+
+        # Broadcasting: compat_origin[i] AND compat_dest[j] para todo (i,j)
+        pair_mask = compat[:, np.newaxis] & compat[np.newaxis, :]  # (N, N)
+
+        # Eliminar diagonal (self-loops)
+        np.fill_diagonal(pair_mask, False)
+
+        return pair_mask
+
+    # -----------------------------------------------------------------
+    # FILTRO 2: HEURÍSTICA DE RANGO GEODÉTICO
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def _filter_2_range(
+        dist_matrix: np.ndarray,
+        vehicle: FleetVehicle,
+        semantic_mask: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Filtro 2 — Heurística de Rango Geodético.
+
+        Para cada par que sobrevivió al Filtro 1, verifica:
+          Haversine_Distance × Safety_Factor ≤ max_range_km
+
+        Operación 100% vectorizada sobre matrices NumPy.
+
+        Parameters
+        ----------
+        dist_matrix : np.ndarray
+            Matriz de distancias Haversine (N, N) en km.
+        vehicle : FleetVehicle
+            Define max_range_km y mode (para buscar safety factor).
+        semantic_mask : np.ndarray
+            Máscara booleana (N, N) del Filtro 1.
+
+        Returns
+        -------
+        np.ndarray
+            Máscara booleana (N, N) donde True = par que sobrevive
+            ambos filtros.
+        """
+        # Obtener safety factor del modo del vehículo
+        safety = SAFETY_FACTORS.get(
+            vehicle.mode,
+            SAFETY_FACTORS.get("default", 1.5),
+        )
+
+        # Aplicar heurística: dist * safety_factor <= max_range
+        # Operación element-wise sobre toda la matriz (vectorizado NumPy)
+        range_mask = (dist_matrix * safety) <= vehicle.max_range_km
+
+        # Intersección con máscara semántica
+        return semantic_mask & range_mask
+
+    # -----------------------------------------------------------------
+    # ORQUESTADOR PRINCIPAL: FILTROS 1 + 2
+    # -----------------------------------------------------------------
+
+    def run_filters_1_2(
+        self,
+    ) -> Tuple[List[DiscoveredCandidate], PipelineTelemetry]:
+        """
+        Ejecuta el embudo completo de Filtros 1 y 2.
+
+        Para cada vehículo de la flota:
+          1. Filtro 1: descarta pares semánticamente incompatibles.
+          2. Filtro 2: descarta pares fuera del rango geodético.
+          3. Recolecta los sobrevivientes como DiscoveredCandidate.
+
+        Returns
+        -------
+        Tuple[List[DiscoveredCandidate], PipelineTelemetry]
+            - Lista de candidatos que sobrevivieron ambos filtros.
+            - Telemetría acumulada del pipeline completo.
+        """
+        t_start = time.perf_counter()
+        telemetry = PipelineTelemetry()
+
+        n = len(self._nodes)
+        m = len(self._fleet)
+        total_possible = n * (n - 1) * m  # N × (N-1) × M (sin self-loops)
+        telemetry.total_input_pairs = total_possible
+        telemetry.vehicles_processed = m
+
+        logger.info(
+            "Discovery Engine: %d nodos × %d vehículos = %s pares posibles (sin self-loops)",
+            n, m, f"{total_possible:,}",
+        )
+
+        # Pre-computar matriz de distancias (una sola vez para todos los vehículos)
+        t_dist_start = time.perf_counter()
+        dist_matrix = self._compute_distance_matrix()
+        t_dist_elapsed = (time.perf_counter() - t_dist_start) * 1000.0
+
+        logger.info("Matriz cdist calculada en %.1f ms.", t_dist_elapsed)
+
+        all_candidates: List[DiscoveredCandidate] = []
+        total_f1_survivors = 0
+        total_f2_survivors = 0
+        t_f1_total = 0.0
+        t_f2_total = 0.0
+
+        for vehicle in self._fleet:
+            vid = vehicle.vehicle_id or vehicle.mode
+            logger.debug("Procesando vehículo: %s (mode=%s, range=%.0f km)",
+                         vid, vehicle.mode, vehicle.max_range_km)
+
+            # --- Filtro 1: Semántico ---
+            t_f1 = time.perf_counter()
+            semantic_mask = self._filter_1_semantic(self._nodes, vehicle)
+            f1_count = int(np.count_nonzero(semantic_mask))
+            t_f1_elapsed = (time.perf_counter() - t_f1) * 1000.0
+            t_f1_total += t_f1_elapsed
+            total_f1_survivors += f1_count
+
+            logger.debug(
+                "  Filtro 1 [%s]: %d/%d pares compatibles (%.1f ms)",
+                vid, f1_count, n * (n - 1), t_f1_elapsed,
+            )
+
+            if f1_count == 0:
+                logger.debug("  → Ningún par compatible. Saltando Filtro 2.")
+                continue
+
+            # --- Filtro 2: Rango Geodético ---
+            t_f2 = time.perf_counter()
+            surviving_mask = self._filter_2_range(dist_matrix, vehicle, semantic_mask)
+            f2_count = int(np.count_nonzero(surviving_mask))
+            t_f2_elapsed = (time.perf_counter() - t_f2) * 1000.0
+            t_f2_total += t_f2_elapsed
+            total_f2_survivors += f2_count
+
+            logger.debug(
+                "  Filtro 2 [%s]: %d/%d pares en rango (%.1f ms)",
+                vid, f2_count, f1_count, t_f2_elapsed,
+            )
+
+            if f2_count == 0:
+                logger.debug("  → Ningún par en rango. Sin candidatos.")
+                continue
+
+            # --- Recolectar sobrevivientes ---
+            # np.argwhere retorna coordenadas (i, j) de los True
+            surviving_indices = np.argwhere(surviving_mask)
+
+            for idx_pair in surviving_indices:
+                i, j = int(idx_pair[0]), int(idx_pair[1])
+                candidate = DiscoveredCandidate(
+                    origin=self._nodes[i],
+                    destination=self._nodes[j],
+                    vehicle=vehicle,
+                    estimated_distance_km=float(dist_matrix[i, j]),
+                )
+                all_candidates.append(candidate)
+
+        # --- Telemetría final ---
+        t_total = (time.perf_counter() - t_start) * 1000.0
+        telemetry.filter_1_survivors = total_f1_survivors
+        telemetry.filter_2_survivors = total_f2_survivors
+        telemetry.filter_1_time_ms = t_f1_total
+        telemetry.filter_2_time_ms = t_f2_total + t_dist_elapsed  # cdist es parte del F2
+        telemetry.total_time_ms = t_total
+
+        logger.info("\n%s", telemetry.summary())
+
+        return all_candidates, telemetry
