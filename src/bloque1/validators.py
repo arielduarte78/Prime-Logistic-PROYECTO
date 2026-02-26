@@ -278,6 +278,172 @@ class NetworkValidator:
             res.add_error("ERR_REF_001", f"Destino no existe: {destination}", "destination", "CRITICAL", "Cargar nodo destino primero")
         return res
 
+    # -----------------------------------------------------------------
+    # V1.3.5: Validadores para Discovery Engine
+    # -----------------------------------------------------------------
+
+    @staticmethod
+    def validate_station_type(raw_type: Any, strict: bool = False) -> ValidationResult:
+        """
+        Valida y normaliza un station_type usando el mapeo canónico.
+
+        Si strict=True, rechaza tipos desconocidos.
+        Si strict=False, acepta tipos desconocidos pero emite warning.
+        En ambos casos, normalized contendrá el valor canónico resultante.
+        """
+        from .station_normalizer import normalize_station_type, is_canonical
+
+        res = ValidationResult()
+        if raw_type is None or (isinstance(raw_type, str) and raw_type.strip() == ""):
+            res.normalized = "warehouse"
+            return res
+
+        if not isinstance(raw_type, str):
+            res.add_error(
+                "ERR_STATION_TYPE",
+                f"station_type debe ser string, recibido: {type(raw_type).__name__}",
+                "station_type", "MEDIUM",
+                "Proveer station_type como string"
+            )
+            return res
+
+        try:
+            canonical = normalize_station_type(raw_type, strict=strict)
+            res.normalized = canonical
+        except ValueError as exc:
+            res.add_error(
+                "ERR_STATION_TYPE",
+                str(exc),
+                "station_type", "MEDIUM",
+                "Verificar mapeo canónico en station_normalizer."
+            )
+        return res
+
+    @staticmethod
+    def validate_fleet_record(data: Dict[str, Any]) -> ValidationResult:
+        """
+        Valida un registro completo de vehículo de flota (FLEET row).
+
+        data debe contener:
+          - mode: str ("truck", "car", "bus")
+          - capacity: float > 0
+          - cost_per_km: float > 0
+          - max_range_km: float > 0
+          - allowed_stations: List[str] (no vacía, valores canónicos)
+
+        Retorna ValidationResult con normalized = dict limpio o errores.
+        """
+        res = ValidationResult()
+        VALID_MODES = {"truck", "car", "bus"}
+
+        # --- mode ---
+        mode = data.get("mode")
+        if not isinstance(mode, str):
+            res.add_error(
+                "ERR_FLEET_MODE",
+                f"mode debe ser string, recibido: {type(mode).__name__}",
+                "mode", "HIGH", f"Usar: {', '.join(sorted(VALID_MODES))}"
+            )
+        else:
+            mode = mode.strip().lower()
+            if mode not in VALID_MODES:
+                res.add_error(
+                    "ERR_FLEET_MODE",
+                    f"mode '{mode}' inválido.",
+                    "mode", "HIGH", f"Valores permitidos: {', '.join(sorted(VALID_MODES))}"
+                )
+
+        # --- capacity ---
+        capacity = data.get("capacity")
+        if capacity is None or not isinstance(capacity, (int, float)):
+            res.add_error(
+                "ERR_FLEET_CAPACITY",
+                f"capacity debe ser numérico, recibido: {capacity}",
+                "capacity", "HIGH", "Proveer número > 0"
+            )
+        elif capacity <= 0:
+            res.add_error(
+                "ERR_FLEET_CAPACITY",
+                f"capacity debe ser > 0, recibido: {capacity}",
+                "capacity", "HIGH", "Proveer número > 0"
+            )
+
+        # --- cost_per_km ---
+        cost_per_km = data.get("cost_per_km")
+        if cost_per_km is None or not isinstance(cost_per_km, (int, float)):
+            res.add_error(
+                "ERR_FLEET_COST",
+                f"cost_per_km debe ser numérico, recibido: {cost_per_km}",
+                "cost_per_km", "HIGH", "Proveer número > 0"
+            )
+        elif cost_per_km <= 0:
+            res.add_error(
+                "ERR_FLEET_COST",
+                f"cost_per_km debe ser > 0, recibido: {cost_per_km}",
+                "cost_per_km", "HIGH", "Proveer número > 0"
+            )
+
+        # --- max_range_km ---
+        max_range_km = data.get("max_range_km")
+        if max_range_km is None or not isinstance(max_range_km, (int, float)):
+            res.add_error(
+                "ERR_FLEET_RANGE",
+                f"max_range_km debe ser numérico, recibido: {max_range_km}",
+                "max_range_km", "HIGH", "Proveer número > 0"
+            )
+        elif max_range_km <= 0:
+            res.add_error(
+                "ERR_FLEET_RANGE",
+                f"max_range_km debe ser > 0, recibido: {max_range_km}",
+                "max_range_km", "HIGH", "Proveer número > 0"
+            )
+
+        # --- allowed_stations ---
+        allowed = data.get("allowed_stations")
+        if not isinstance(allowed, list) or len(allowed) == 0:
+            res.add_error(
+                "ERR_FLEET_STATIONS",
+                "allowed_stations debe ser una lista no vacía de strings",
+                "allowed_stations", "HIGH",
+                "Proveer lista de tipos canónicos (e.g., ['warehouse', 'factory'])"
+            )
+        else:
+            normalized_stations = []
+            for i, s in enumerate(allowed):
+                if not isinstance(s, str):
+                    res.add_error(
+                        "ERR_FLEET_STATIONS",
+                        f"allowed_stations[{i}] debe ser string, recibido: {type(s).__name__}",
+                        f"allowed_stations[{i}]", "HIGH", "Usar strings"
+                    )
+                else:
+                    # Normalizar cada estación
+                    st_res = NetworkValidator.validate_station_type(s, strict=False)
+                    normalized_stations.append(st_res.normalized or s.strip().lower())
+            if res.ok:
+                allowed = normalized_stations
+
+        # --- Construir resultado normalizado ---
+        if res.ok:
+            res.normalized = {
+                "mode": mode.strip().lower() if isinstance(mode, str) else mode,
+                "capacity": float(capacity),
+                "cost_per_km": float(cost_per_km),
+                "max_range_km": float(max_range_km),
+                "allowed_stations": allowed,
+            }
+            # Campos opcionales
+            if "vehicle_id" in data:
+                res.normalized["vehicle_id"] = str(data["vehicle_id"]).strip()
+            if "count" in data:
+                cnt = data["count"]
+                if isinstance(cnt, int) and cnt >= 1:
+                    res.normalized["count"] = cnt
+                else:
+                    res.normalized["count"] = 1
+
+        return res
+
 # ---------------------------------------------------------------------
 # UTILIDAD PARA BATCH PRE-FILTER (RECOMENDADO PARA PERFORMANCE)
 # ---------------------------------------------------------------------
@@ -309,7 +475,16 @@ def batch_validate_rows(rows: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, An
                 continue
             result.normalized = result.normalized or {}
             result.normalized.update({"lat": geo_res.normalized["lat"], "lon": geo_res.normalized["lon"]})
-
+        # Station type (Normalización Semántica)
+        if "station_type" in row:
+            st_res = NetworkValidator.validate_station_type(row.get("station_type"), strict=False)
+            if not st_res.ok:
+                result.ok = False
+                result.errors.extend(st_res.errors)
+                yield {"row": row, "result": result}
+                continue
+            result.normalized = result.normalized or {}
+            result.normalized["station_type"] = st_res.normalized
         # Cost profile
         if "cost_profile" in row:
             c_res = NetworkValidator.validate_cost_profile(row.get("cost_profile"))
