@@ -36,6 +36,13 @@ ERROR_CATALOG: Dict[str, ErrorDefinition] = {
    "ERR_CAP_NEG": ErrorDefinition("Capacidad negativa.", "HIGH", "Capacidad debe ser >= 0."),
    "ERR_CAP_TOO_LARGE": ErrorDefinition("Capacidad excede máximo.", "HIGH", "Reducir capacidad o ajustar MAX_CAPACITY."),
    "WARN_CAP_EXCEEDS_MODE": ErrorDefinition("Capacidad excede umbral por modo.", "MEDIUM", "Se clampeará al exportar."),
+    # V1.3.5: Fleet & Station Type validation
+    "ERR_FLEET_MODE": ErrorDefinition("Modo de flota inválido.", "HIGH", "Usar: truck, car o bus."),
+    "ERR_FLEET_CAPACITY": ErrorDefinition("Capacidad de flota inválida.", "HIGH", "Debe ser numérico y > 0."),
+    "ERR_FLEET_COST": ErrorDefinition("Costo por km inválido.", "HIGH", "Debe ser numérico y > 0."),
+    "ERR_FLEET_RANGE": ErrorDefinition("Rango máximo inválido.", "HIGH", "max_range_km debe ser numérico y > 0."),
+    "ERR_FLEET_STATIONS": ErrorDefinition("Estaciones permitidas inválidas.", "HIGH", "Lista no vacía de tipos canónicos."),
+    "ERR_STATION_TYPE": ErrorDefinition("Tipo de estación desconocido.", "MEDIUM", "Verificar mapeo canónico en station_normalizer."),
 
 }
 
@@ -216,6 +223,7 @@ class NodeRecord(SerializableMixin):
     id: str
     lat: float
     lon: float
+    station_type: str = "warehouse"
     supply: float = 0.0
     demand: float = 0.0
     processing_cost: float = 0.0
@@ -227,6 +235,9 @@ class NodeRecord(SerializableMixin):
             raise PrimeLogisticsError(f"Coords ({self.lat}, {self.lon})", "ERR_GEO_001")
         if self.processing_cost < 0:
             raise PrimeLogisticsError(f"Costo de nodo negativo: {self.processing_cost}", "ERR_COST_001")
+        # V1.3.5: normalizar station_type a lowercase
+        if isinstance(self.station_type, str):
+            object.__setattr__(self, "station_type", self.station_type.strip().lower())
 
 @dataclass(frozen=True)
 class ArcRecord(SerializableMixin):

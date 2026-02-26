@@ -78,10 +78,30 @@ MODE_ALLOWED_STATION_TYPES: Dict[str, tuple] = {
     "boat": ("port", "harbor"),
     "rail": ("rail_terminal", "rail_yard"),
     "train": ("rail_terminal", "rail_yard"),
-    "truck": ("road_node", "warehouse", "terminal", "depot","airport","port","harbor"),
+    "truck": ("road_node", "warehouse", "terminal", "depot", "airport", "port", "harbor"),
     "camion": ("road_node", "warehouse", "terminal", "depot"),
+    # V1.3.5: Nuevos modos terrestres para Discovery Engine
+    "car": ("road_node", "warehouse", "terminal", "client", "supplier"),
+    "bus": ("road_node", "terminal", "warehouse", "client"),
     "default": ("warehouse", "terminal", "road_node")
 }
+
+# =====================================================================
+# V1.3.5 — CONSTANTES PARA EL DISCOVERY ENGINE
+# =====================================================================
+
+# Safety Factors para Filter 2 (Heurística de Rango Geodético).
+# Si Haversine_Distance * SAFETY_FACTOR > max_range_km, el par se descarta.
+SAFETY_FACTORS: Dict[str, float] = {
+    "truck": 1.4,
+    "car": 1.2,
+    "bus": 1.2,
+    "default": 1.5,
+}
+
+# Máximo de workers concurrentes para ThreadPoolExecutor (Filter 3).
+# Límite estricto para proteger contra saturación y bloqueo de IP por OSM.
+MAX_WORKERS: int = 5
 
 # Conversión de unidades a toneladas (normalizamos internamente a toneladas)
 UNIT_CONVERSIONS_TO_TON: Dict[str, float] = {
