@@ -2,10 +2,10 @@
 name = "prime-logistics"
 version = "1.3.5"
 description = "Autonomous Topology and Multimodal Discovery Engine"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.14"
 extraPaths = ["src"]
 include = ["src", "main.py", "scripts"]
 typeCheckingMode = "basic"
@@ -13,14 +13,11 @@ reportMissingModuleSource = false
 
 [tool.mypy]
 mypy_path = "src"
-python_version = "3.10"
+python_version = "3.14"
 ignore_missing_imports = true
 warn_unused_imports = true
 warn_unused_configs = true
 
-[tool.pyre]
-source_directories = ["src"]
-search_path = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

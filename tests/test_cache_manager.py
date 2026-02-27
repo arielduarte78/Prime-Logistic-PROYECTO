@@ -18,6 +18,7 @@ class TestSafeCacheManager(unittest.TestCase):
         self.assertTrue(ok)
         loaded = self.cache.load_graph("A", "B", 6, 1, "drive")
         self.assertIsNotNone(loaded)
+        assert loaded is not None
         self.assertEqual(len(loaded.nodes), 2)
 
     def test_quarantine_on_corruption(self):
@@ -87,6 +88,7 @@ class TestSafeCacheManager(unittest.TestCase):
         self.assertEqual(len(errors), 0, "Hubo errores de concurrencia al guardar.")
         loaded = self.cache.load_graph("X", "Y", 6, 1, "drive")
         self.assertIsNotNone(loaded)
+        assert loaded is not None
 
     def tearDown(self):
         import shutil

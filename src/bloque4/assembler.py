@@ -75,7 +75,8 @@ class GraphAssembler:
                 mode = "truck"
 
             # 3. Cálculo de Distancia (Self-Healing)
-            distancia = float(getattr(arc_data, "distance", 0.0) or 0.0)
+            distancia_attr = getattr(arc_data, "distance", 0.0)
+            distancia = float(distancia_attr if distancia_attr is not None else 0.0)
             # Si no hay coordenadas válidas, evitamos excepción y dejamos distancia 0
             try:
                 if distancia <= 0.001:
@@ -84,7 +85,12 @@ class GraphAssembler:
                     lat2 = getattr(dest_node, "lat", None)
                     lon2 = getattr(dest_node, "lon", None)
                     if None not in (lat1, lon1, lat2, lon2):
-                        distancia = cls._haversine(float(lat1), float(lon1), float(lat2), float(lon2))
+                        distancia = cls._haversine(
+                            float(lat1 if lat1 is not None else 0.0),
+                            float(lon1 if lon1 is not None else 0.0),
+                            float(lat2 if lat2 is not None else 0.0),
+                            float(lon2 if lon2 is not None else 0.0),
+                        )
                     else:
                         LOGGER.debug("Coordenadas faltantes para arco %s; distancia queda en 0.0", arc_id)
                         distancia = 0.0
@@ -98,9 +104,9 @@ class GraphAssembler:
             cost_profile = getattr(arc_data, "cost_profile", None)
             if cost_profile:
                 try:
-                    if getattr(cost_profile, "cost_type", "") == "flat":
                         params = getattr(cost_profile, "params", {}) or {}
-                        costo_excel = float(params.get("variable_coef", 0.0))
+                        var_coef = params.get("variable_coef", 0.0)
+                        costo_excel = float(var_coef if var_coef is not None else 0.0)
                 except Exception:
                     LOGGER.debug("Cost profile mal formado en arco %s", arc_id)
 
@@ -111,16 +117,19 @@ class GraphAssembler:
                 if metadata and hasattr(metadata, "extras"):
                     extras = getattr(metadata, "extras", None) or {}
                     if isinstance(extras, dict):
-                        original_cost = float(extras.get("original_cost", 0.0) or 0.0)
+                        orig_cost = extras.get("original_cost", 0.0)
+                        original_cost = float(orig_cost if orig_cost is not None else 0.0)
                 if original_cost > 0.0:
                     costo_final = original_cost
                 else:
                     tarifa = cls.RATES.get(str(mode).lower(), cls.RATES["truck"])
-                    costo_final = float(distancia) * float(tarifa)
+                    costo_final = float(distancia if distancia is not None else 0.0) * float(tarifa if tarifa is not None else 0.0)
 
             # 5. Riesgo (defensivo)
             target_node = getattr(arc_data, "destination", None)
-            target_node_risk = float(fragility_map.get(target_node, 0.0) or 0.0)
+            target_node_key = str(target_node) if target_node is not None else ""
+            frag_val = fragility_map.get(target_node_key, 0.0)
+            target_node_risk = float(frag_val if frag_val is not None else 0.0)
             risk_prob = min(max(target_node_risk, 0.0), 0.9999)
 
             # 6. Ensamblaje: asegurar campos mínimos esperados por el engine/profiler
@@ -128,14 +137,14 @@ class GraphAssembler:
                 edge_id=str(arc_id),
                 source=str(getattr(arc_data, "origin", "")),
                 target=str(getattr(arc_data, "destination", "")),
-                cost=float(costo_final),
-                distance=float(distancia),
+                cost=float(costo_final if costo_final is not None else 0.0),
+                distance=float(distancia if distancia is not None else 0.0),
                 mode=str(mode),
-                risk=float(risk_prob),
+                risk=float(risk_prob if risk_prob is not None else 0.0),
                 # Campos adicionales que pueden ser rellenados por build_weights
-                risk_weight=float(0.0),
-                w_survival=float(0.0),
-                w_expected_cost=float(0.0)
+                risk_weight=0.0,
+                w_survival=0.0,
+                w_expected_cost=0.0
             )
             b4_edges.append(edge)
 

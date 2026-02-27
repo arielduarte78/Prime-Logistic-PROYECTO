@@ -9,24 +9,24 @@ Demuestra casos de uso realistas del motor estocástico para:
 4. Generación de reportes de riesgo
 """
 
-from incidents import ManifestLoader, Category
-from typing import List, Dict
+from bloque2.incidents import ManifestLoader, Category, IncidentDefinition
+from typing import List, Dict, Any, Optional
 import random
 
 
 class RiskAnalyzer:
     """Analizador de riesgo logístico basado en el manifiesto."""
     
-    def __init__(self, manifest_path: str = "manifest.yaml"):
+    def __init__(self, manifest_path: str = "manifest.yaml") -> None:
         """Inicializa el analizador cargando el manifiesto."""
         self.manifest = ManifestLoader.load(manifest_path)
-        self.global_params = {
+        self.global_params: Dict[str, float] = {
             'alpha': self.manifest.global_parameters.alpha,
             'beta': self.manifest.global_parameters.beta,
             'gamma': self.manifest.global_parameters.gamma
         }
     
-    def simulate_single_day(self, seed: int = None) -> Dict:
+    def simulate_single_day(self, seed: Optional[int] = None) -> Dict[str, Any]:
         """
         Simula un día individual con eventos estocásticos.
         
@@ -39,8 +39,8 @@ class RiskAnalyzer:
         if seed is not None:
             random.seed(seed)
         
-        active_events = []
-        effects = {
+        active_events: List[Dict[str, Any]] = []
+        effects: Dict[str, Any] = {
             'capacity_reduction': 1.0,
             'demand_increase': 1.0,
             'disabled_connections': 0,
@@ -54,14 +54,14 @@ class RiskAnalyzer:
             
             for incident in incidents:
                 # Calcular probabilidad efectiva con cascada
-                p_eff = incident.effective_probability(
+                p_eff: float = incident.effective_probability(
                     [evt['code'] for evt in active_events]
                 )
                 
                 # Lanzar dado
                 if random.random() < p_eff:
                     # Evento ocurre
-                    event_data = {
+                    event_data: Dict[str, Any] = {
                         'code': incident.code,
                         'level': incident.level.value,
                         'p_base': incident.p_base,
@@ -71,17 +71,23 @@ class RiskAnalyzer:
                     active_events.append(event_data)
                     
                     # Aplicar efectos estructurales
-                    effects['capacity_reduction'] *= incident.structural_effects.capacity.modifier
-                    effects['demand_increase'] *= incident.structural_effects.demand.modifier
+                    cap_val: float = effects['capacity_reduction']
+                    effects['capacity_reduction'] = cap_val * incident.structural_effects.capacity.modifier
+                    
+                    dem_val: float = effects['demand_increase']
+                    effects['demand_increase'] = dem_val * incident.structural_effects.demand.modifier
                     
                     if incident.structural_effects.adjacency.action.value == 'DISABLE':
-                        effects['disabled_connections'] += 1
+                        dis_val: int = effects['disabled_connections']
+                        effects['disabled_connections'] = dis_val + 1
                     
                     # Registrar elementos afectados
                     if incident.target.type.value in ['NODE', 'ZONE']:
-                        effects['affected_nodes'].append(incident.target.selector)
+                        node_list: List[str] = effects['affected_nodes']
+                        node_list.append(incident.target.selector)
                     elif incident.target.type.value == 'ARC':
-                        effects['affected_arcs'].append(incident.target.selector)
+                        arc_list: List[str] = effects['affected_arcs']
+                        arc_list.append(incident.target.selector)
         
         return {
             'events': active_events,
@@ -89,7 +95,7 @@ class RiskAnalyzer:
             'total_events': len(active_events)
         }
     
-    def monte_carlo_analysis(self, n_scenarios: int = 1000, seed: int = 42) -> Dict:
+    def monte_carlo_analysis(self, n_scenarios: int = 1000, seed: int = 42) -> Dict[str, Any]:
         """
         Ejecuta análisis Monte Carlo de N escenarios.
         
@@ -102,50 +108,60 @@ class RiskAnalyzer:
         """
         random.seed(seed)
         
-        results = {
-            'event_frequencies': {},
-            'cascade_activations': 0,
-            'capacity_reductions': [],
-            'demand_increases': [],
-            'scenarios_with_events': 0
-        }
+        event_frequencies: Dict[str, int] = {}
+        cascade_activations: int = 0
+        capacity_reductions: List[float] = []
+        demand_increases: List[float] = []
+        scenarios_with_events: int = 0
         
         # Inicializar contadores de frecuencia
         for incident in self.manifest.incidents:
-            results['event_frequencies'][incident.code] = 0
+            event_frequencies[incident.code] = 0
         
         # Ejecutar simulaciones
         for i in range(n_scenarios):
-            scenario = self.simulate_single_day(seed=seed + i)
+            scenario: Dict[str, Any] = self.simulate_single_day(seed=seed + i)
             
             if scenario['total_events'] > 0:
-                results['scenarios_with_events'] += 1
+                scenarios_with_events += 1
             
             # Contar eventos
             for event in scenario['events']:
-                results['event_frequencies'][event['code']] += 1
+                event_frequencies[event['code']] += 1
                 
                 # Detectar cascadas (amplificación > 1)
                 if event['amplification'] > 1.1:
-                    results['cascade_activations'] += 1
+                    cascade_activations += 1
             
             # Acumular efectos
-            results['capacity_reductions'].append(scenario['effects']['capacity_reduction'])
-            results['demand_increases'].append(scenario['effects']['demand_increase'])
+            capacity_reductions.append(scenario['effects']['capacity_reduction'])
+            demand_increases.append(scenario['effects']['demand_increase'])
         
         # Calcular estadísticas
-        results['event_probabilities'] = {
+        event_probabilities: Dict[str, float] = {
             code: freq / n_scenarios 
-            for code, freq in results['event_frequencies'].items()
+            for code, freq in event_frequencies.items()
         }
         
-        results['avg_capacity_reduction'] = sum(results['capacity_reductions']) / n_scenarios
-        results['avg_demand_increase'] = sum(results['demand_increases']) / n_scenarios
-        results['cascade_rate'] = results['cascade_activations'] / max(1, results['scenarios_with_events'])
+        avg_capacity_reduction: float = sum(capacity_reductions) / n_scenarios
+        avg_demand_increase: float = sum(demand_increases) / n_scenarios
+        cascade_rate: float = cascade_activations / max(1, scenarios_with_events)
+        
+        results: Dict[str, Any] = {
+            'event_frequencies': event_frequencies,
+            'cascade_activations': cascade_activations,
+            'capacity_reductions': capacity_reductions,
+            'demand_increases': demand_increases,
+            'scenarios_with_events': scenarios_with_events,
+            'event_probabilities': event_probabilities,
+            'avg_capacity_reduction': avg_capacity_reduction,
+            'avg_demand_increase': avg_demand_increase,
+            'cascade_rate': cascade_rate,
+        }
         
         return results
     
-    def sensitivity_analysis(self, parameter: str, values: List[float]) -> Dict:
+    def sensitivity_analysis(self, parameter: str, values: List[float]) -> Dict[float, Dict[str, float]]:
         """
         Analiza sensibilidad de impactos a parámetros globales.
         
@@ -156,21 +172,21 @@ class RiskAnalyzer:
         Returns:
             Resultados de sensibilidad
         """
-        original_value = self.global_params[parameter]
-        sensitivity = {}
+        original_value: float = self.global_params[parameter]
+        sensitivity: Dict[float, Dict[str, float]] = {}
         
         for val in values:
             # Modificar parámetro temporalmente
             self.global_params[parameter] = val
             
             # Calcular impactos promedio
-            total_impact_c = 0
-            total_impact_t = 0
-            count = 0
+            total_impact_c: float = 0.0
+            total_impact_t: float = 0.0
+            count: int = 0
             
             for incident in self.manifest.incidents:
-                impact_c = incident.get_impact_multiplier('C', self.global_params)
-                impact_t = incident.get_impact_multiplier('T', self.global_params)
+                impact_c: float = incident.get_impact_multiplier('C', 0.5, self.global_params)
+                impact_t: float = incident.get_impact_multiplier('T', 0.5, self.global_params)
                 
                 if impact_c > 1.0:
                     total_impact_c += impact_c
@@ -198,9 +214,9 @@ class RiskAnalyzer:
         Returns:
             Reporte en formato texto
         """
-        mc_results = self.monte_carlo_analysis(n_scenarios)
+        mc_results: Dict[str, Any] = self.monte_carlo_analysis(n_scenarios)
         
-        report = []
+        report: List[str] = []
         report.append("=" * 80)
         report.append("REPORTE DE ANÁLISIS DE RIESGO LOGÍSTICO")
         report.append("=" * 80)
@@ -220,7 +236,9 @@ class RiskAnalyzer:
         )[:5]
         
         for i, (code, prob) in enumerate(sorted_events, 1):
-            incident = self.manifest.get_incident(code)
+            incident: Optional[IncidentDefinition] = self.manifest.get_incident(code)
+            if incident is None:
+                continue
             report.append(f"{i}. {code}")
             report.append(f"   Nivel: {incident.level.value}")
             report.append(f"   P_base: {incident.p_base:.4f}")
@@ -241,10 +259,10 @@ class RiskAnalyzer:
         report.append("DEPENDENCIAS DE CASCADA")
         report.append("-" * 80)
         
-        for incident in self.manifest.incidents:
-            if incident.conditioners:
-                report.append(f"\n{incident.code}:")
-                for cond in incident.conditioners:
+        for incident_item in self.manifest.incidents:
+            if incident_item.conditioners:
+                report.append(f"\n{incident_item.code}:")
+                for cond in incident_item.conditioners:
                     report.append(f"  → Amplifica {cond.multiplier:.1f}x cuando ocurre {cond.event}")
         
         report.append("\n" + "=" * 80)
@@ -252,7 +270,7 @@ class RiskAnalyzer:
         return "\n".join(report)
 
 
-def example_1_basic_simulation():
+def example_1_basic_simulation() -> None:
     """Ejemplo 1: Simulación básica de un día."""
     print("\n" + "="*80)
     print("EJEMPLO 1: Simulación de un Día Individual")
@@ -263,7 +281,7 @@ def example_1_basic_simulation():
     # Simular 3 días diferentes
     for day in range(1, 4):
         print(f"\n--- Día {day} ---")
-        scenario = analyzer.simulate_single_day(seed=day)
+        scenario: Dict[str, Any] = analyzer.simulate_single_day(seed=day)
         
         if scenario['total_events'] == 0:
             print("Sin eventos disruptivos")
@@ -273,20 +291,20 @@ def example_1_basic_simulation():
                 amp_str = f" (x{event['amplification']:.1f})" if event['amplification'] > 1.1 else ""
                 print(f"  - {event['code']}: P_eff={event['p_effective']:.4f}{amp_str}")
             
-            effects = scenario['effects']
+            effects: Dict[str, Any] = scenario['effects']
             print("\nEfectos agregados:")
             print(f"  Capacidad residual: {effects['capacity_reduction'] * 100:.1f}%")
             print(f"  Demanda ajustada: {effects['demand_increase'] * 100:.1f}%")
 
 
-def example_2_monte_carlo():
+def example_2_monte_carlo() -> None:
     """Ejemplo 2: Análisis Monte Carlo."""
     print("\n" + "="*80)
     print("EJEMPLO 2: Análisis Monte Carlo (1000 escenarios)")
     print("="*80)
     
     analyzer = RiskAnalyzer()
-    results = analyzer.monte_carlo_analysis(n_scenarios=1000)
+    results: Dict[str, Any] = analyzer.monte_carlo_analysis(n_scenarios=1000)
     
     print(f"\nEscenarios con eventos: {results['scenarios_with_events']}/1000")
     print(f"Tasa de cascadas: {results['cascade_rate']:.2f}")
@@ -300,10 +318,12 @@ def example_2_monte_carlo():
     )[:3]
     
     for code, prob in sorted_events:
-        print(f"  {code}: {prob:.4f} (esperado: {analyzer.manifest.get_incident(code).p_base:.4f})")
+        inc: Optional[IncidentDefinition] = analyzer.manifest.get_incident(code)
+        if inc is not None:
+            print(f"  {code}: {prob:.4f} (esperado: {inc.p_base:.4f})")
 
 
-def example_3_sensitivity():
+def example_3_sensitivity() -> None:
     """Ejemplo 3: Análisis de sensibilidad."""
     print("\n" + "="*80)
     print("EJEMPLO 3: Análisis de Sensibilidad a Parámetro γ (gamma)")
@@ -312,26 +332,26 @@ def example_3_sensitivity():
     analyzer = RiskAnalyzer()
     
     # Probar diferentes valores de gamma
-    gamma_values = [0.1, 0.25, 0.5, 1.0]
-    sensitivity = analyzer.sensitivity_analysis('gamma', gamma_values)
+    gamma_values: List[float] = [0.1, 0.25, 0.5, 1.0]
+    sensitivity: Dict[float, Dict[str, float]] = analyzer.sensitivity_analysis('gamma', gamma_values)
     
     print("\nImpacto de γ en multiplicadores de tiempo:")
     for gamma, impacts in sensitivity.items():
         print(f"  γ={gamma:.2f}: Impacto promedio en T = {impacts['avg_impact_t']:.3f}")
 
 
-def example_4_risk_report():
+def example_4_risk_report() -> None:
     """Ejemplo 4: Reporte completo de riesgo."""
     print("\n" + "="*80)
     print("EJEMPLO 4: Reporte de Riesgo Completo")
     print("="*80)
     
     analyzer = RiskAnalyzer()
-    report = analyzer.generate_risk_report(n_scenarios=1000)
+    report: str = analyzer.generate_risk_report(n_scenarios=1000)
     print(report)
 
 
-def main():
+def main() -> None:
     """Ejecuta todos los ejemplos."""
     print("="*80)
     print("EJEMPLOS AVANZADOS: MOTOR ESTOCÁSTICO")

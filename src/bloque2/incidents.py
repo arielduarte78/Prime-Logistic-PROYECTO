@@ -75,10 +75,10 @@ class Distribution:
     type: DistType
     parameters: Dict[str, Any] = field(default_factory=dict)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Valida que el tipo sea un DistType válido."""
         if isinstance(self.type, str):
-            self.type = DistType[self.type]
+            object.__setattr__(self, 'type', DistType[self.type])
 
 
 @dataclass
@@ -87,10 +87,10 @@ class Target:
     type: TargetType
     selector: str  # Patrón para seleccionar elementos (e.g., "WAREHOUSE_*")
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Convierte string a TargetType si es necesario."""
         if isinstance(self.type, str):
-            self.type = TargetType[self.type]
+            object.__setattr__(self, 'type', TargetType[self.type])
 
 
 @dataclass
@@ -98,10 +98,10 @@ class AdjacencyEffect:
     """Efecto sobre la adyacencia/conectividad."""
     action: AdjacencyAction
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Convierte string a AdjacencyAction si es necesario."""
         if isinstance(self.action, str):
-            self.action = AdjacencyAction[self.action]
+            object.__setattr__(self, 'action', AdjacencyAction[self.action])
 
 
 @dataclass
@@ -109,7 +109,7 @@ class CapacityEffect:
     """Efecto sobre la capacidad del elemento."""
     modifier: float  # Multiplicador: 1.0 = sin cambio, 0.0 = anulado, >1.0 = incremento
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Valida que el modificador sea no-negativo."""
         if self.modifier < 0:
             raise ValueError(f"Capacity modifier debe ser >= 0, obtenido: {self.modifier}")
@@ -120,7 +120,7 @@ class DemandEffect:
     """Efecto sobre la demanda del elemento."""
     modifier: float  # Multiplicador de demanda
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Valida que el modificador sea no-negativo."""
         if self.modifier < 0:
             raise ValueError(f"Demand modifier debe ser >= 0, obtenido: {self.modifier}")
@@ -141,7 +141,7 @@ class MetricImpact:
     base_multiplier: float
     stress_scaling: str  # Parámetro global a usar (alpha, beta, gamma)
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Valida que el multiplicador base sea positivo."""
         if self.base_multiplier <= 0:
             raise ValueError(f"base_multiplier debe ser > 0, obtenido: {self.base_multiplier}")
@@ -160,10 +160,10 @@ class Conditioner:
     multiplier: float  # Factor multiplicativo
     scope: ConditionerScope  # Ámbito de aplicación
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Valida el condicionador."""
         if isinstance(self.scope, str):
-            self.scope = ConditionerScope[self.scope.upper()]
+            object.__setattr__(self, 'scope', ConditionerScope[self.scope.upper()])
         if self.multiplier < 0:
             raise ValueError(f"Conditioner multiplier debe ser >= 0, obtenido: {self.multiplier}")
 
@@ -191,7 +191,7 @@ class IncidentDefinition:
     structural_effects: StructuralEffects  # Efectos sobre estructura
     metric_impacts: List[MetricImpact]  # Impactos en métricas
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """
         Validación post-inicialización.
         
@@ -209,7 +209,7 @@ class IncidentDefinition:
         # Convertir level si viene como string
         if isinstance(self.level, str):
             try:
-                self.level = Category[self.level]
+                object.__setattr__(self, 'level', Category[self.level])
             except KeyError:
                 raise ValueError(f"Categoría inválida para {self.code}: {self.level}")
         
@@ -222,7 +222,7 @@ class IncidentDefinition:
         p_eff = self.p_base
         for cond in self.conditioners:
             if cond.scope == ConditionerScope.PROBABILITY and cond.event in active_events:
-                p_eff *= cond.multiplier
+                p_eff = p_eff * cond.multiplier
         return min(1.0, p_eff)
     
     def get_impact_multiplier(self, metric: str, stress_index: float, global_params: Dict[str, float]) -> float:
@@ -371,13 +371,25 @@ class ManifestLoader:
         
         for event_data in events_list:
             # Parsear estructuras anidadas
-            distribution = Distribution(**event_data['distribution'])
-            target = Target(**event_data['target'])
+            dist_data: Dict[str, Any] = event_data['distribution']
+            distribution = Distribution(
+                type=dist_data.get('type', 'BERNOULLI'),
+                parameters=dist_data.get('parameters', {})
+            )
+            tgt_data: Dict[str, Any] = event_data['target']
+            target = Target(
+                type=tgt_data.get('type', 'NODE'),
+                selector=str(tgt_data.get('selector', ''))
+            )
             
             # Parsear structural_effects
-            adjacency = AdjacencyEffect(**event_data['structural_effects']['adjacency'])
-            capacity = CapacityEffect(**event_data['structural_effects']['capacity'])
-            demand = DemandEffect(**event_data['structural_effects']['demand'])
+            se_data: Dict[str, Any] = event_data['structural_effects']
+            adj_data: Dict[str, Any] = se_data['adjacency']
+            adjacency = AdjacencyEffect(action=adj_data.get('action', 'NONE'))
+            cap_data: Dict[str, Any] = se_data['capacity']
+            capacity = CapacityEffect(modifier=float(cap_data.get('modifier', 1.0)))
+            dem_data: Dict[str, Any] = se_data['demand']
+            demand = DemandEffect(modifier=float(dem_data.get('modifier', 1.0)))
             structural_effects = StructuralEffects(
                 adjacency=adjacency,
                 capacity=capacity,
@@ -385,10 +397,24 @@ class ManifestLoader:
             )
             
             # Parsear metric_impacts
-            metric_impacts = [MetricImpact(**mi) for mi in event_data['metric_impacts']]
+            metric_impacts = [
+                MetricImpact(
+                    metric=str(mi.get('metric', '')),
+                    base_multiplier=float(mi.get('base_multiplier', 1.0)),
+                    stress_scaling=str(mi.get('stress_scaling', 'alpha'))
+                )
+                for mi in event_data['metric_impacts']
+            ]
             
             # Parsear conditioners
-            conditioners = [Conditioner(**c) for c in event_data['conditioners']]
+            conditioners = [
+                Conditioner(
+                    event=str(c.get('event', '')),
+                    multiplier=float(c.get('multiplier', 1.0)),
+                    scope=c.get('scope', 'PROBABILITY')
+                )
+                for c in event_data['conditioners']
+            ]
             
             # Crear IncidentDefinition
             incident = IncidentDefinition(
@@ -423,7 +449,7 @@ def print_manifest_summary(manifest: Manifest) -> None:
     print(f"\nTotal de eventos: {len(manifest.incidents)}")
     
     # Resumen por categoría
-    for category in Category:
+    for category in list(Category):
         incidents = manifest.get_incidents_by_level(category)
         print(f"  - {category.value}: {len(incidents)} eventos")
     
@@ -463,7 +489,8 @@ def validate_manifest_integrity(manifest: Manifest) -> List[str]:
     # Verificar consistencia de target types con event levels
     level_rules = manifest.event_levels
     for incident in manifest.incidents:
-        allowed = level_rules[incident.level.value].get('allowed_target_types', [])
+        level_key: str = str(incident.level.value)
+        allowed = level_rules[level_key].get('allowed_target_types', [])
         if incident.target.type.value not in allowed:
             warnings.append(
                 f"WARNING: {incident.code} usa target {incident.target.type.value} "

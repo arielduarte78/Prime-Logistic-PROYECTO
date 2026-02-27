@@ -30,7 +30,7 @@ class SmartLazyIngestor:
         # Ajustes de OSMnx (Importación explícita para evitar errores de versión)
         try:
             from osmnx import settings as ox_settings
-            ox_settings.timeout = 180
+            ox_settings.timeout = 180  # type: ignore[attr-defined]
             ox_settings.use_cache = False
         except Exception as e:
             logger.warning("No se pudo configurar OSMnx: %s", e)
@@ -129,7 +129,10 @@ class SmartLazyIngestor:
             return None
 
         # Pegamos todos los hexágonos para hacer una sola llamada a internet
-        return unary_union(polys)
+        result = unary_union(polys)
+        if isinstance(result, Polygon):
+            return result
+        return None  # Non-polygon geometry (e.g., MultiPolygon or Point)
 
     # ----------------------------------------------------------------------
     # Validación de parámetros
@@ -201,6 +204,7 @@ class SmartLazyIngestor:
 
                 # 3. Matemáticas: Calcular Corredor
                 start_math = time.perf_counter()
+                total_cells = 0  # Initialize before use
                 corredor = build_h3_corridor(
                     origin, dest,
                     resolution=self.config.resolution,
@@ -237,7 +241,7 @@ class SmartLazyIngestor:
                         g_origen = self._graph_from_polygon_adapter(
                             poly_origen, network_type="drive", simplify=True
                         )
-                        if g_origen.number_of_nodes() > 0 and g_origen.number_of_edges() > 0:
+                        if g_origen is not None and g_origen.number_of_nodes() > 0 and g_origen.number_of_edges() > 0:
                             # Verificación adicional: al menos una arista tiene atributo highway
                             if any('highway' in data for _, _, data in g_origen.edges(data=True)):
                                 subgraphs.append(g_origen)
@@ -260,7 +264,7 @@ class SmartLazyIngestor:
                         g_destino = self._graph_from_polygon_adapter(
                             poly_destino, network_type="drive", simplify=True
                         )
-                        if g_destino.number_of_nodes() > 0 and g_destino.number_of_edges() > 0:
+                        if g_destino is not None and g_destino.number_of_nodes() > 0 and g_destino.number_of_edges() > 0:
                             if any('highway' in data for _, _, data in g_destino.edges(data=True)):
                                 subgraphs.append(g_destino)
                                 self._emit_metric("osm.download.success", labels={
@@ -283,7 +287,7 @@ class SmartLazyIngestor:
                             g_troncal = self._graph_from_polygon_adapter(
                                 poly_troncal, custom_filter=trunk_filter, simplify=True
                             )
-                            if g_troncal.number_of_nodes() > 0 and g_troncal.number_of_edges() > 0:
+                            if g_troncal is not None and g_troncal.number_of_nodes() > 0 and g_troncal.number_of_edges() > 0:
                                 if any('highway' in data for _, _, data in g_troncal.edges(data=True)):
                                     subgraphs.append(g_troncal)
                                     self._emit_metric("osm.download.success", labels={

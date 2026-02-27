@@ -10,11 +10,11 @@ import tempfile
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from time import sleep
 
-import networkx as nx
-from filelock import FileLock, Timeout
+import networkx as nx  # pyre-ignore[21]
+from filelock import FileLock, Timeout  # pyre-ignore[21]
 
 logger = logging.getLogger(__name__)
 
@@ -103,14 +103,14 @@ class SafeCacheManager:
         key: str,
         suffix: str = "",
         reason: str = "",
-        exc: Exception = None,
+        exc: Optional[Exception] = None,
     ) -> None:
         try:
             if not path.exists():
                 logger.error("Intento de cuarentena de archivo inexistente: %s", path)
                 ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
                 forensic_path = self.quarantine_dir / f"{key}_{ts}.forensic.json"
-                forensic = {
+                forensic: Dict[str, Any] = {
                     "cache_key": key,
                     "original_path": str(path),
                     "quarantine_path": None,
@@ -187,14 +187,15 @@ class SafeCacheManager:
         Llamar desde tareas de mantenimiento (cron, systemd timers).
         """
         cutoff = datetime.utcnow().timestamp() - retention_days * 86400
-        removed = 0
+        removed_list: List[int] = []
         for p in self.quarantine_dir.iterdir():
             try:
                 if p.is_file() and p.stat().st_mtime < cutoff:
                     p.unlink()
-                    removed += 1
+                    removed_list.append(1)
             except Exception as e:
                 logger.debug("No se pudo eliminar %s: %s", p, e)
+        removed = sum(removed_list)
         if removed:
             log_func = logger.debug if auto else logger.info
             log_func("Prune: eliminados %d archivos de cuarentena con más de %d días", removed, retention_days)

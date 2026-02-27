@@ -1,7 +1,7 @@
 import copy
 import numpy as np
 import random
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Sequence
 from dataclasses import dataclass, field
 from scipy.sparse import issparse
 
@@ -38,6 +38,11 @@ class ScenarioEvent:
     intensity_multiplier: float
     affected_indices: List[int]
 
+    @property
+    def amplification(self) -> float:
+        """Alias para intensity_multiplier (compatibilidad con integration.py)."""
+        return self.intensity_multiplier
+
 
 @dataclass
 class Scenario:
@@ -47,6 +52,16 @@ class Scenario:
     events: List[ScenarioEvent]
     stress_index: float
     seed: int
+
+    @property
+    def total_events(self) -> int:
+        """Número total de eventos aplicados en este escenario."""
+        return len(self.events)
+
+    @property
+    def has_cascades(self) -> bool:
+        """True si hubo más de un evento (cascada)."""
+        return len(self.events) > 1
 
     def get_capacity_reduction(self) -> float:
         """
@@ -61,7 +76,7 @@ class Scenario:
         # 2. Si K es infinito o cero, usamos Conectividad Estructural (A) como fallback
         if base_k <= 0 or np.isinf(base_k):
             current_a = np.sum(self.network.A > 0)
-            base_a = self.network.meta.get('base_a_sum', current_a)
+            base_a = float(self.network.meta.get('base_a_sum', current_a) or current_a)
             return float(current_a / base_a) if base_a > 0 else 0.0
 
         return float(current_k / base_k)
@@ -143,24 +158,26 @@ class MonteCarloGenerator:
 
     def _generate_single_scenario(self, scenario_id: int) -> Scenario:
         net = copy.deepcopy(self.base_network)
-        active_codes, events, S = set(), [], 0.0
+        active_codes, events = set(), []
+        S_list: List[float] = [0.0]
 
         for level in [Category.SYSTEMIC, Category.TACTICAL, Category.MICRO]:
             for inc in self.manifest.get_incidents_by_level(level):
                 p_eff = inc.effective_probability(list(active_codes))
                 if random.random() < p_eff:
                     active_codes.add(inc.code)
-                    S += inc.stress_weight
+                    S_list.append(inc.stress_weight)
+                    current_S = sum(S_list)
                     indices = self._get_target_indices(net, inc)
                     m = NetworkActor.apply_incident(
-                        net, inc, indices, S, self.manifest.global_parameters
+                        net, inc, indices, current_S, self.manifest.global_parameters
                     )
                     events.append(ScenarioEvent(
                         inc.code, level.value, p_eff, m, indices
                     ))
 
         return Scenario(
-            scenario_id, net, events, S, (self.seed or 0) + scenario_id
+            scenario_id, net, events, sum(S_list), (self.seed or 0) + scenario_id
         )
 
     def _get_target_indices(self, net: NetworkSnapshot,
@@ -244,7 +261,7 @@ def load_base_network_from_bloque1(topology_package: Dict[str, Any]) -> NetworkS
 
 class ScenarioAnalyzer:
     @staticmethod
-    def compute_statistics(scenarios: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def compute_statistics(scenarios: Sequence[Any]) -> Dict[str, Any]:
         # CAMBIO: Leemos la llave del diccionario en vez de llamar al método
         ret = [s['capacity_retained'] for s in scenarios]
         avg = np.mean(ret)
@@ -256,6 +273,11 @@ class ScenarioAnalyzer:
         }
 
     @staticmethod
-    def get_worst_case_scenario(scenarios: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def get_worst_case_scenario(scenarios: Sequence[Any]) -> Any:
         # CAMBIO: Usamos la llave para encontrar el peor caso
         return min(scenarios, key=lambda s: s['capacity_retained'])
+
+    @staticmethod
+    def get_best_case_scenario(scenarios: Sequence[Any]) -> Any:
+        """Retorna el escenario con mayor retención de capacidad."""
+        return max(scenarios, key=lambda s: s['capacity_retained'])

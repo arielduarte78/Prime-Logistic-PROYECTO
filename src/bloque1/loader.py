@@ -89,7 +89,7 @@ class ExcelLoader:
         nodes: List[NodeRecord] = []
 
         for row in raw_data:
-            if pd.isna(row.get("id")):
+            if row.get("id") is None or bool(pd.isna(row.get("id"))):
                 continue
 
             # V1.3.5: Usar el validador canónico estricto de la Fase 1
@@ -103,9 +103,9 @@ class ExcelLoader:
                     lat=float(row.get("lat") or 0.0),
                     lon=float(row.get("lon") or 0.0),
                     station_type=station_type,
-                    supply=float(row.get("supply") or 0.0) if not pd.isna(row.get("supply")) else 0.0,
-                    demand=float(row.get("demand") or 0.0) if not pd.isna(row.get("demand")) else 0.0,
-                    processing_cost=float(row.get("proc_cost") or 0.0) if not pd.isna(row.get("proc_cost")) else 0.0,
+                    supply=float(row.get("supply") or 0.0) if row.get("supply") is not None and not bool(pd.isna(row.get("supply"))) else 0.0,
+                    demand=float(row.get("demand") or 0.0) if row.get("demand") is not None and not bool(pd.isna(row.get("demand"))) else 0.0,
+                    processing_cost=float(row.get("proc_cost") or 0.0) if row.get("proc_cost") is not None and not bool(pd.isna(row.get("proc_cost"))) else 0.0,
                 )
                 nodes.append(node)
             except Exception as e:
@@ -148,9 +148,9 @@ class ExcelLoader:
                 "allowed_stations": allowed_list,
             }
             # Campos opcionales
-            if not pd.isna(row.get("vehicle_id", None)):
+            if row.get("vehicle_id") is not None and not bool(pd.isna(row.get("vehicle_id", None))):
                 payload["vehicle_id"] = str(row["vehicle_id"]).strip()
-            if not pd.isna(row.get("count", None)):
+            if row.get("count") is not None and not bool(pd.isna(row.get("count", None))):
                 payload["count"] = int(row["count"])
 
             # Validar con el validador de Phase 1
@@ -161,7 +161,8 @@ class ExcelLoader:
                 continue
 
             try:
-                vehicle = FleetVehicle(**result.normalized)
+                normalized = result.normalized if result.normalized is not None else {}
+                vehicle = FleetVehicle(**normalized)  # type: ignore[arg-type]
                 vehicles.append(vehicle)
                 logger.debug("Vehiculo cargado: %s (%s)", vehicle.vehicle_id or f"fleet_{i}", vehicle.mode)
             except Exception as e:

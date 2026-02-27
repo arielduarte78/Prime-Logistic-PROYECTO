@@ -17,7 +17,7 @@ _P_MAX = 1.0 - 1e-12
 def _safe_prob(p: float) -> float:
     """Clamp probability into [0, 1) with tiny epsilon safety for log."""
     try:
-        pf = float(p)
+        pf = float(p if p is not None else 0.0)
     except Exception:
         raise ValueError(f"Probability value is not numeric: {p!r}")
     if pf <= 0.0:
@@ -77,12 +77,12 @@ def build_edge_weights(edges: Iterable[Edge], reliability_report: Mapping[str, M
 
         # Convertir y validar numéricamente
         try:
-            prob_f = float(prob)
+            prob_f = float(prob if prob is not None else 0.0)
         except Exception:
             LOGGER.warning("Edge %s prob_failure is not numeric: %r; skipping.", eid, prob)
             continue
         try:
-            impact_f = float(impact)
+            impact_f = float(impact if impact is not None else 0.0)
         except Exception:
             LOGGER.warning("Edge %s impact_mean is not numeric: %r; skipping.", eid, impact)
             continue
@@ -96,17 +96,18 @@ def build_edge_weights(edges: Iterable[Edge], reliability_report: Mapping[str, M
         # Eje fricción/operativo: cost + p_safe * impact_mean
         # Defensive cost extraction
         try:
-            cost_val = float(getattr(edge, "cost", 0.0) or 0.0)
+            cost_attr = getattr(edge, "cost", 0.0)
+            cost_val = float(cost_attr if cost_attr is not None else 0.0)
         except Exception:
             LOGGER.warning("Edge %s has non-numeric cost; defaulting to 0.0", eid)
             cost_val = 0.0
 
-        w_expected = cost_val + prob_safe * float(impact_f)
+        w_expected = cost_val + prob_safe * float(impact_f if impact_f is not None else 0.0)
 
         # Asignar in-place; si Edge es inmutable, lanzar RuntimeError con mensaje claro
         try:
-            setattr(edge, "w_survival", float(w_surv))
-            setattr(edge, "w_expected_cost", float(w_expected))
+            setattr(edge, "w_survival", float(w_surv if w_surv is not None else 0.0))
+            setattr(edge, "w_expected_cost", float(w_expected if w_expected is not None else 0.0))
             LOGGER.debug(
                 "Assigned weights to edge %s: w_survival=%.6f w_expected_cost=%.6f",
                 eid, w_surv, w_expected

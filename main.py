@@ -6,7 +6,7 @@ import os
 import sys
 import logging
 import pickle
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import numpy as np
 
@@ -16,8 +16,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src
 # Bloque 1: Discovery Engine V1.3.5
 from bloque1.network import NetworkIndexer, Ingestor
 from bloque1.loader import ExcelLoader
-from bloque1.models import ArcRecord, Metadata, CostProfile, SpeedProfile
-from bloque1.discovery_engine import DiscoveryEngine
+from bloque1.models import ArcRecord, Metadata, CostProfile, SpeedProfile, NodeRecord
+from bloque1.fleet_schema import FleetVehicle
+from bloque1.discovery_engine import DiscoveryEngine, DiscoveredCandidate
+
 from bloque1.smart_ingestor import SmartLazyIngestor
 from bloque1.cache_manager import SafeCacheManager
 from bloque1.config import H3RouterConfig
@@ -41,26 +43,26 @@ from bloque1.logger import setup_logging
 logger = logging.getLogger(__name__)
 
 # Velocidades promedio por modo (km/h) para calculo de travel_time
-AVG_SPEED_KMH = {"truck": 60.0, "car": 80.0, "bus": 50.0}
+AVG_SPEED_KMH: Dict[str, float] = {"truck": 60.0, "car": 80.0, "bus": 50.0}
 
 
 # -------------------------
 # Conversion de candidatos descubiertos a ArcRecord formales
 # -------------------------
-def candidates_to_arc_records(survivors):
+def candidates_to_arc_records(survivors: List[DiscoveredCandidate]) -> List[ArcRecord]:
     """
     Convierte una lista de DiscoveredCandidate (que sobrevivieron F1/F2/F3)
     en ArcRecord formales listos para inyectar en el NetworkIndexer.
     """
-    arcs = []
+    arcs: List[ArcRecord] = []
     for cand in survivors:
-        mode = cand.vehicle.mode
-        vid = cand.vehicle.vehicle_id or mode
+        mode: str = cand.vehicle.mode
+        vid: str = cand.vehicle.vehicle_id or mode
         arc_id = f"DISC_{cand.origin.id}_{cand.destination.id}_{vid}"
 
-        phys_km = cand.physical_distance_km if cand.physical_distance_km > 0 else cand.estimated_distance_km
-        cost_total = cand.vehicle.cost_per_km * phys_km
-        avg_speed = AVG_SPEED_KMH.get(mode, 60.0)
+        phys_km: float = cand.physical_distance_km if cand.physical_distance_km > 0 else cand.estimated_distance_km
+        cost_total: float = cand.vehicle.cost_per_km * phys_km
+        avg_speed: float = AVG_SPEED_KMH.get(mode, 60.0)
 
         arc = ArcRecord(
             id=arc_id,
@@ -91,7 +93,7 @@ def candidates_to_arc_records(survivors):
 # -------------------------
 # Pipeline principal V1.3.5
 # -------------------------
-def ejecutar_pipeline():
+def ejecutar_pipeline() -> None:
     setup_logging()
     base_path = os.path.dirname(os.path.abspath(__file__))
     src_path = os.path.join(base_path, "src")
@@ -191,8 +193,9 @@ def ejecutar_pipeline():
     tb.build_topology()
     topology_package = tb.export_matrices(sparse=False)
 
-    node_ids = list(topology_package["nodes"])
-    start_node, end_node = node_ids[0], node_ids[-1]
+    node_ids: List[str] = [str(nid) for nid in topology_package["nodes"]]
+    start_node: str = node_ids[0]
+    end_node: str = node_ids[-1]
 
     logger.info("   Topologia lista: %d nodos y %d arcos.", len(node_ids), indexer.arc_count)
     logger.info("   Ruta Objetivo: %s -> %s", start_node, end_node)
@@ -237,16 +240,16 @@ def ejecutar_pipeline():
     payloads: Dict[str, Dict[str, Any]] = {}
 
     for s in scenarios:
-        s_id = str(s.get("scenario_id", s.get("id", "unknown")))
-        retention = float(s.get("capacity_retained", 1.0) or 1.0)
+        s_id = str(s.scenario_id)
+        retention = float(s.get_capacity_reduction())
         cap_loss = max(0.0, 1.0 - retention)
         node_impacts: Dict[str, float] = {}
-        events = s.get("events", []) if isinstance(s, dict) else []
+        events = s.events
 
         if events and cap_loss > 0:
             impact_val = cap_loss / max(1, len(events))
             for e in events:
-                code = e.get("code", "") if isinstance(e, dict) else ""
+                code = e.code
                 if "WAREHOUSE" in code:
                     node_impacts[start_node] = node_impacts.get(start_node, 0.0) + impact_val
                 elif "CLIENT" in code:
@@ -271,16 +274,17 @@ def ejecutar_pipeline():
     prime_graph = GraphAssembler.assemble(indexer, node_ids, fragility_map)
 
     # Construir reliability_report minimo si no existe
-    if not hasattr(prime_graph, "reliability_report"):
+    rel_report = getattr(prime_graph, "reliability_report", None)
+    if not rel_report:
         edges_report = {}
         for e in prime_graph.edges:
             prob = float(getattr(e, "risk", 0.0) or 0.0)
             impact = float(getattr(e, "capacity", getattr(e, "impact", 0.0)) or 0.0)
             edges_report[str(e.edge_id)] = {"prob_failure": prob, "impact_mean": impact}
-        prime_graph.reliability_report = {"edges": edges_report}
+        rel_report = {"edges": edges_report}
 
     # Precalculo de pesos por arco
-    build_edge_weights(prime_graph.edges, prime_graph.reliability_report)
+    build_edge_weights(prime_graph.edges, rel_report)
 
     # Vectores de pesos
     w_survival_vec = np.array([getattr(e, "w_survival", 0.0) for e in prime_graph.edges], dtype=float)
@@ -311,7 +315,7 @@ def ejecutar_pipeline():
         pareto_labels = engine_b4.solve(prime_graph, source=start_node, target=end_node)
     except TypeError:
         try:
-            pareto_labels = engine_b4.solve(prime_graph, w_survival_vec, w_expected_vec, config=OptimizerConfig(
+            pareto_labels = engine_b4.solve(prime_graph, w_survival_vec, w_expected_vec, config=OptimizerConfig( # type: ignore
                 source_node_id=start_node, target_node_id=end_node, kappa=0.0))
         except Exception as exc:
             logger.exception("MultiObjectiveEngine.solve failed: %s", exc)
