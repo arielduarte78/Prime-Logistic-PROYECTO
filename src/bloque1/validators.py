@@ -426,13 +426,12 @@ class NetworkValidator:
             if res.ok:
                 allowed = normalized_stations
 
-        # --- Construir resultado normalizado ---
         if res.ok:
             res.normalized = {
                 "mode": mode.strip().lower() if isinstance(mode, str) else mode,
                 "capacity": float(capacity if capacity is not None else 0.0),
-                "cost_per_km": float(cost_per_km if cost_per_km is not None else 0.0),
-                "max_range_km": float(max_range_km if max_range_km is not None else 0.0),
+                "cost_per_km": float(cost_per_km if cost_per_km is not None else float('inf')),
+                "max_range_km": float(max_range_km if max_range_km is not None else float('inf')),
                 "allowed_stations": allowed,
             }
             # Campos opcionales

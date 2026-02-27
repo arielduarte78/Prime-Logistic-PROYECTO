@@ -75,9 +75,9 @@ class GraphAssembler:
                 mode = "truck"
 
             # 3. Cálculo de Distancia (Self-Healing)
-            distancia_attr = getattr(arc_data, "distance", 0.0)
-            distancia = float(distancia_attr if distancia_attr is not None else 0.0)
-            # Si no hay coordenadas válidas, evitamos excepción y dejamos distancia 0
+            distancia_attr = getattr(arc_data, "distance", float('inf'))
+            distancia = float(distancia_attr if distancia_attr is not None else float('inf'))
+            # Si no hay coordenadas válidas, evitamos excepción y dejamos distancia inf
             try:
                 if distancia <= 0.001:
                     lat1 = getattr(origin_node, "lat", None)
@@ -92,11 +92,11 @@ class GraphAssembler:
                             float(lon2 if lon2 is not None else 0.0),
                         )
                     else:
-                        LOGGER.debug("Coordenadas faltantes para arco %s; distancia queda en 0.0", arc_id)
-                        distancia = 0.0
+                        LOGGER.debug("Coordenadas faltantes para arco %s; distancia queda en inf", arc_id)
+                        distancia = float('inf')
             except Exception:
                 LOGGER.exception("Error calculando distancia Haversine para arco %s", arc_id)
-                distancia = 0.0
+                distancia = float('inf')
 
             # 4. Cálculo de Costo Monetario (defensivo)
             costo_final = 0.0
@@ -117,13 +117,13 @@ class GraphAssembler:
                 if metadata and hasattr(metadata, "extras"):
                     extras = getattr(metadata, "extras", None) or {}
                     if isinstance(extras, dict):
-                        orig_cost = extras.get("original_cost", 0.0)
-                        original_cost = float(orig_cost if orig_cost is not None else 0.0)
-                if original_cost > 0.0:
+                        orig_cost = extras.get("original_cost", float('inf'))
+                        original_cost = float(orig_cost if orig_cost is not None else float('inf'))
+                if original_cost > 0.0 and original_cost != float('inf'):
                     costo_final = original_cost
                 else:
                     tarifa = cls.RATES.get(str(mode).lower(), cls.RATES["truck"])
-                    costo_final = float(distancia if distancia is not None else 0.0) * float(tarifa if tarifa is not None else 0.0)
+                    costo_final = float(distancia if distancia is not None else float('inf')) * float(tarifa if tarifa is not None else float('inf'))
 
             # 5. Riesgo (defensivo)
             target_node = getattr(arc_data, "destination", None)
@@ -137,8 +137,8 @@ class GraphAssembler:
                 edge_id=str(arc_id),
                 source=str(getattr(arc_data, "origin", "")),
                 target=str(getattr(arc_data, "destination", "")),
-                cost=float(costo_final if costo_final is not None else 0.0),
-                distance=float(distancia if distancia is not None else 0.0),
+                cost=float(costo_final if costo_final is not None else float('inf')),
+                distance=float(distancia if distancia is not None else float('inf')),
                 mode=str(mode),
                 risk=float(risk_prob if risk_prob is not None else 0.0),
                 # Campos adicionales que pueden ser rellenados por build_weights
