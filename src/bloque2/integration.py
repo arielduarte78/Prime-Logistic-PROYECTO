@@ -73,7 +73,7 @@ class StochasticNetworkPipeline:
     def load_topology_from_bloque1(
         self, 
         topology_package: Dict[str, Any]
-    ):
+    ) -> None:
         """
         Carga la topología exportada por Bloque 1.
         
@@ -91,9 +91,11 @@ class StochasticNetworkPipeline:
             >>> pipeline.load_topology_from_bloque1(package)
         """
         self.base_network = load_base_network_from_bloque1(topology_package)
-        print(f"✓ Topología cargada: {self.base_network.n_nodes} nodos")
+        network = self.base_network
+        assert network is not None
+        print(f"✓ Topología cargada: {network.n_nodes} nodos")
     
-    def load_incident_manifest(self, manifest_path: str):
+    def load_incident_manifest(self, manifest_path: str) -> None:
         """
         Carga el manifiesto de incidentes.
         
@@ -101,9 +103,11 @@ class StochasticNetworkPipeline:
             manifest_path: Ruta al archivo manifest.yaml
         """
         self.manifest = ManifestLoader.load(manifest_path)
-        print(f"✓ Manifiesto cargado: {len(self.manifest.incidents)} eventos")
+        manifest = self.manifest
+        assert manifest is not None
+        print(f"✓ Manifiesto cargado: {len(manifest.incidents)} eventos")
     
-    def generate_stochastic_scenarios(self, n_scenarios: int, verbose: bool = True):
+    def generate_stochastic_scenarios(self, n_scenarios: int, verbose: bool = True) -> List[Scenario]:
         """
         Orquesta la simulación Monte Carlo con convergencia estadística.
         """
@@ -135,9 +139,13 @@ class StochasticNetworkPipeline:
         )
 
         if verbose:
-            print(f"✓ Proceso finalizado. Total escenarios: {len(self.scenarios)}")
+            scenarios = self.scenarios
+            assert scenarios is not None
+            print(f"✓ Proceso finalizado. Total escenarios: {len(scenarios)}")
         
-        return self.scenarios
+        scenarios_result = self.scenarios
+        assert scenarios_result is not None
+        return scenarios_result
     
     
     def get_statistics(self) -> Dict[str, Any]:
@@ -149,14 +157,14 @@ class StochasticNetworkPipeline:
         """
         if self.scenarios is None:
             raise RuntimeError("Debe generar escenarios primero")
-        
-        return ScenarioAnalyzer.compute_statistics(self.scenarios)
+        scenarios = self.scenarios
+        return ScenarioAnalyzer.compute_statistics(scenarios)
     
     def export_for_optimizer(
         self, 
         output_path: str,
         format: str = "pickle"
-    ):
+    ) -> None:
         """
         Exporta los escenarios en formato listo para el optimizador.
         
@@ -167,33 +175,35 @@ class StochasticNetworkPipeline:
         if self.scenarios is None:
             raise RuntimeError("Debe generar escenarios primero")
         
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path: Path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         
         if format == "pickle":
-            self._export_pickle(output_path)
+            self._export_pickle(out_path)
         elif format == "json":
-            self._export_json(output_path)
+            self._export_json(out_path)
         else:
             raise ValueError(f"Formato no soportado: {format}")
         
-        print(f"✓ Escenarios exportados a: {output_path}")
+        print(f"✓ Escenarios exportados a: {out_path}")
     
-    def _export_pickle(self, path: Path):
+    def _export_pickle(self, path: Path) -> None:
         """Exporta en formato pickle (binario)."""
+        manifest = self.manifest
+        scenarios = self.scenarios
         package = {
             'base_network': self.base_network,
-            'scenarios': self.scenarios,
-            'manifest_meta': self.manifest.meta,
+            'scenarios': scenarios,
+            'manifest_meta': manifest.meta if manifest else {},
             'global_parameters': {
-                'alpha': self.manifest.global_parameters.alpha,
-                'beta': self.manifest.global_parameters.beta,
-                'gamma': self.manifest.global_parameters.gamma
+                'alpha': manifest.global_parameters.alpha if manifest else 0.0,
+                'beta': manifest.global_parameters.beta if manifest else 0.0,
+                'gamma': manifest.global_parameters.gamma if manifest else 0.0
             },
             'statistics': self.get_statistics(),
             'metadata': {
                 'generated_at': datetime.now().isoformat(),
-                'n_scenarios': len(self.scenarios),
+                'n_scenarios': len(scenarios) if scenarios else 0,
                 'seed': self.seed
             }
         }
@@ -201,10 +211,12 @@ class StochasticNetworkPipeline:
         with open(path, 'wb') as f:
             pickle.dump(package, f, protocol=pickle.HIGHEST_PROTOCOL)
     
-    def _export_json(self, path: Path):
+    def _export_json(self, path: Path) -> None:
         """Exporta en formato JSON (legible)."""
         # JSON no puede serializar numpy arrays directamente,
         # así que exportamos solo metadatos
+        scenarios = self.scenarios or []
+        base_network = self.base_network
         package = {
             'statistics': self.get_statistics(),
             'scenarios': [
@@ -221,13 +233,13 @@ class StochasticNetworkPipeline:
                         for e in s.events
                     ]
                 }
-                for s in self.scenarios
+                for s in scenarios
             ],
             'metadata': {
                 'generated_at': datetime.now().isoformat(),
-                'n_scenarios': len(self.scenarios),
+                'n_scenarios': len(scenarios),
                 'seed': self.seed,
-                'n_nodes': self.base_network.n_nodes
+                'n_nodes': base_network.n_nodes if base_network else 0
             }
         }
         
@@ -247,17 +259,20 @@ class StochasticNetworkPipeline:
         if self.scenarios is None:
             raise RuntimeError("Debe generar escenarios primero")
         
+        scenarios = self.scenarios
+        base_network = self.base_network
+        manifest = self.manifest
         stats = self.get_statistics()
         
-        report = []
+        report: List[str] = []
         report.append("="*80)
         report.append("REPORTE DE ESCENARIOS ESTOCÁSTICOS")
         report.append("="*80)
         report.append(f"\nGenerado: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         report.append(f"Semilla: {self.seed}")
         report.append("\nRed Base:")
-        report.append(f"  - Nodos: {self.base_network.n_nodes}")
-        report.append(f"  - Arcos activos: {np.sum(self.base_network.A)}")
+        report.append(f"  - Nodos: {base_network.n_nodes if base_network else 0}")
+        report.append(f"  - Arcos activos: {np.sum(base_network.A) if base_network else 0}")
         
         report.append(f"\nEscenarios Generados: {stats['n_scenarios']}")
         report.append(f"  - Con eventos: {stats['scenarios_with_events']} "
@@ -277,7 +292,9 @@ class StochasticNetworkPipeline:
         )[:5]
         
         for i, (code, freq) in enumerate(sorted_events, 1):
-            incident = self.manifest.get_incident(code)
+            incident = manifest.get_incident(code) if manifest else None
+            if incident is None:
+                continue
             prob_observed = freq / stats['n_scenarios']
             report.append(f"  {i}. {code}")
             report.append(f"     Nivel: {incident.level.value}")
@@ -288,7 +305,7 @@ class StochasticNetworkPipeline:
         # Análisis de cascadas
         if stats['cascade_count'] > 0:
             report.append("\nAnálisis de Cascadas:")
-            cascade_scenarios = [s for s in self.scenarios if s.has_cascades]
+            cascade_scenarios = [s for s in scenarios if s.has_cascades]
             
             # Encontrar la cascada más grande
             max_amp = 0
@@ -304,8 +321,8 @@ class StochasticNetworkPipeline:
                 report.append(f"    Evento: {max_event.code}")
         
         # Casos extremos
-        worst = ScenarioAnalyzer.get_worst_case_scenario(self.scenarios)
-        best = ScenarioAnalyzer.get_best_case_scenario(self.scenarios)
+        worst = ScenarioAnalyzer.get_worst_case_scenario(scenarios)
+        best = ScenarioAnalyzer.get_best_case_scenario(scenarios)
         
         report.append("\nCasos Extremos:")
         report.append(f"  Peor caso (Escenario #{worst.scenario_id}):")
@@ -393,7 +410,7 @@ def find_critical_events(
         if s.get_capacity_reduction() < threshold
     ]
     
-    critical_events = {}
+    critical_events: Dict[str, float] = {}
     for scenario in critical_scenarios:
         for event in scenario.events:
             critical_events[event.code] = critical_events.get(event.code, 0) + 1

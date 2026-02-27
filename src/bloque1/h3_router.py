@@ -57,10 +57,10 @@ def _import_h3_adapter() -> Dict[str, Any]:
         # ---- to_cell ----
         if hasattr(h3, "latlng_to_cell"):
             _to_cell = h3.latlng_to_cell
-        elif hasattr(h3, "geo_to_h3"):
-            _to_cell = h3.geo_to_h3
+        elif hasattr(h3, "latlng_to_cell"): # Fallback removido
+            _to_cell = getattr(h3, "latlng_to_cell")
         elif hasattr(h3, "latlng_to_h3"):
-            _to_cell = h3.latlng_to_h3
+            _to_cell = getattr(h3, "latlng_to_h3")
         else:
             raise RuntimeError("No se encontró función de conversión lat/lon a celda H3")
 
@@ -71,7 +71,7 @@ def _import_h3_adapter() -> Dict[str, Any]:
         if hasattr(h3, "grid_path_cells"):
             _line = h3.grid_path_cells
         elif hasattr(h3, "h3_line"):
-            _line = h3.h3_line
+            _line = getattr(h3, "h3_line")
         else:
             _line = None
 
@@ -83,8 +83,8 @@ def _import_h3_adapter() -> Dict[str, Any]:
         # ---- disk ----
         if hasattr(h3, "grid_disk"):
             _disk = h3.grid_disk
-        elif hasattr(h3, "k_ring"):
-            _disk = h3.k_ring
+        elif hasattr(h3, "grid_disk"):
+            _disk = getattr(h3, "grid_disk")
         else:
             raise RuntimeError("No se encontró función de anillo H3")
 
@@ -94,8 +94,8 @@ def _import_h3_adapter() -> Dict[str, Any]:
         # ---- to_latlng ----
         if hasattr(h3, "cell_to_latlng"):
             _to_latlng = h3.cell_to_latlng
-        elif hasattr(h3, "h3_to_geo"):
-            _to_latlng = h3.h3_to_geo
+        elif hasattr(h3, "cell_to_latlng"):
+            _to_latlng = getattr(h3, "cell_to_latlng")
         else:
             raise RuntimeError("No se encontró función para obtener centroide de celda")
 
@@ -109,7 +109,7 @@ def _import_h3_adapter() -> Dict[str, Any]:
                 if hasattr(h3, "get_resolution"):
                     h3.get_resolution(cell)
                 elif hasattr(h3, "h3_get_resolution"):
-                    h3.h3_get_resolution(cell)
+                    getattr(h3, "h3_get_resolution")(cell)
                 else:
                     return isinstance(cell, str) and len(cell) > 0
                 return True
@@ -294,6 +294,7 @@ def build_h3_corridor(origin: RouteEndpoint,
         raise ValueError("No se pudieron generar celdas H3 válidas para origen/destino")
 
     # Path directo
+    direct_path: Tuple[str, ...]
     if origin_cell == destination_cell:
         direct_path = (origin_cell,)
         path_method = "same_cell"
@@ -309,8 +310,9 @@ def build_h3_corridor(origin: RouteEndpoint,
             error_code = "LINE_FUNCTION_MISSING"
         else:
             try:
-                direct_path = _call_with_retry(line_func, origin_cell, destination_cell,
+                res_path = _call_with_retry(line_func, origin_cell, destination_cell,
                                                max_attempts=3, base_delay=0.1)
+                direct_path = tuple(res_path) if res_path else (origin_cell, destination_cell)
                 path_method = "h3_line"
             except Exception:
                 logger.exception(

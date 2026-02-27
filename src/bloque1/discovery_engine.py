@@ -23,7 +23,10 @@ import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .smart_ingestor import SmartLazyIngestor
 
 import numpy as np
 from scipy.spatial.distance import cdist
@@ -68,9 +71,21 @@ class DiscoveredCandidate:
 
     def as_tuple(self) -> Tuple[str, str, str, float, float]:
         """Retorna (origin_id, dest_id, vehicle_mode, est_dist, phys_dist)."""
-        vid = self.vehicle.vehicle_id or self.vehicle.mode
+        vid: str = self.vehicle.vehicle_id or self.vehicle.mode
         return (self.origin.id, self.destination.id, vid, 
                 self.estimated_distance_km, self.physical_distance_km)
+
+
+@dataclass
+class FilterResult:
+    """Resultado tipado de una validacion del Filtro 3.
+
+    Elimina la ambiguedad de retornar `DiscoveredCandidate | str | None`.
+    Pyre2 puede resolver el tipo en el consumidor sin isinstance guards.
+    """
+    success: bool
+    candidate: Optional[DiscoveredCandidate] = None
+    error_type: Optional[str] = None
 
 
 @dataclass
@@ -400,10 +415,10 @@ class DiscoveryEngine:
         logger.info("Matriz cdist calculada en %.1f ms.", t_dist_elapsed)
 
         all_candidates: List[DiscoveredCandidate] = []
-        total_f1_survivors: int = 0
-        total_f2_survivors: int = 0
-        t_f1_total: float = 0.0
-        t_f2_total: float = 0.0
+        f1_survivors: List[int] = []
+        f2_survivors: List[int] = []
+        f1_times: List[float] = []
+        f2_times: List[float] = []
 
         for vehicle in self._fleet:
             vid = vehicle.vehicle_id or vehicle.mode
@@ -415,8 +430,8 @@ class DiscoveryEngine:
             semantic_mask = self._filter_1_semantic(self._nodes, vehicle)
             f1_count = int(np.count_nonzero(semantic_mask))
             t_f1_elapsed = (time.perf_counter() - t_f1) * 1000.0
-            t_f1_total += t_f1_elapsed
-            total_f1_survivors += f1_count
+            f1_times.append(t_f1_elapsed)
+            f1_survivors.append(f1_count)
 
             logger.debug(
                 "  Filtro 1 [%s]: %d/%d pares compatibles (%.1f ms)",
@@ -432,8 +447,8 @@ class DiscoveryEngine:
             surviving_mask = self._filter_2_range(dist_matrix, vehicle, semantic_mask)
             f2_count = int(np.count_nonzero(surviving_mask))
             t_f2_elapsed = (time.perf_counter() - t_f2) * 1000.0
-            t_f2_total += t_f2_elapsed
-            total_f2_survivors += f2_count
+            f2_times.append(t_f2_elapsed)
+            f2_survivors.append(f2_count)
 
             logger.debug(
                 "  Filtro 2 [%s]: %d/%d pares en rango (%.1f ms)",
@@ -460,10 +475,10 @@ class DiscoveryEngine:
 
         # --- Telemetría final ---
         t_total = (time.perf_counter() - t_start) * 1000.0
-        telemetry.filter_1_survivors = total_f1_survivors
-        telemetry.filter_2_survivors = total_f2_survivors
-        telemetry.filter_1_time_ms = t_f1_total
-        telemetry.filter_2_time_ms = t_f2_total + t_dist_elapsed  # cdist es parte del F2
+        telemetry.filter_1_survivors = sum(f1_survivors)
+        telemetry.filter_2_survivors = sum(f2_survivors)
+        telemetry.filter_1_time_ms = sum(f1_times)
+        telemetry.filter_2_time_ms = sum(f2_times) + t_dist_elapsed  # cdist es parte del F2
         telemetry.total_time_ms = t_total
 
         logger.info("\n%s", telemetry.summary())
@@ -477,17 +492,17 @@ class DiscoveryEngine:
     def run_filter_3(
         self,
         candidates: List[DiscoveredCandidate],
-        ingestor,
+        ingestor: "SmartLazyIngestor",
         telemetry: PipelineTelemetry,
         output_csv: str = "discovery_audit.csv"
     ) -> List[DiscoveredCandidate]:
         """
-        Filtro 3 — Validación Física Viaria.
+        Filtro 3 — Validacion Fisica Viaria.
 
-        Toma los candidatos que sobrevivieron F1 y F2, y los valida contra 
-        la realidad física (OpenStreetMap) usando el SmartLazyIngestor.
-        
-        RESTRICCIÓN: Usa ThreadPoolExecutor con max_workers estricto
+        Toma los candidatos que sobrevivieron F1 y F2, y los valida contra
+        la realidad fisica (OpenStreetMap) usando el SmartLazyIngestor.
+
+        RESTRICCION: Usa ThreadPoolExecutor con max_workers estricto
         (definido en config.py) para no saturar la API de OSM.
 
         Genera discovery_audit.csv al finalizar.
@@ -496,70 +511,66 @@ class DiscoveryEngine:
             logger.info("Filtro 3: No hay candidatos para validar.")
             return []
 
-        logger.info("🚀 Iniciando Filtro 3: Validación Física para %d candidatos (max_workers=%d)", 
+        logger.info("Iniciando Filtro 3: Validacion Fisica para %d candidatos (max_workers=%d)",
                     len(candidates), MAX_WORKERS)
-        
-        t_f3_start = time.perf_counter()
+
+        t_f3_start: float = time.perf_counter()
         final_survivors: List[DiscoveredCandidate] = []
-        
+
         from .h3_router import RouteEndpoint
-        
-        def _validate_single(candidate: DiscoveredCandidate):
-            o_node = candidate.origin
-            d_node = candidate.destination
-            
+
+        def _validate_single(candidate: DiscoveredCandidate) -> FilterResult:
+            """Valida un candidato contra la red vial real. Retorna FilterResult."""
+            o_node: NodeRecord = candidate.origin
+            d_node: NodeRecord = candidate.destination
+
             orig_ep = RouteEndpoint(name=o_node.id, lat=o_node.lat, lon=o_node.lon)
             dest_ep = RouteEndpoint(name=d_node.id, lat=d_node.lat, lon=d_node.lon)
-            
+
             try:
-                # Usa caché de Dijkstra en memoria o descarga OSMnx con backoff
-                phys_dist = ingestor.validate_physical_connection(
+                phys_dist: float = ingestor.validate_physical_connection(
                     origin=orig_ep,
                     dest=dest_ep,
                     mode=candidate.vehicle.mode
                 )
                 candidate.physical_distance_km = phys_dist
-                # Regla Física F3: La ruta debe existir (phys_dist > 0)
-                # y ser factible para el rango del vehículo
                 if phys_dist > 0 and phys_dist <= candidate.vehicle.max_range_km:
-                    candidate.physical_distance_km = phys_dist
-                    return candidate
+                    return FilterResult(success=True, candidate=candidate)
                 else:
-                    return None
-                    
-            except Exception as e:
-                err_type = type(e).__name__
-                return err_type
+                    return FilterResult(success=False)
 
-        # Ejecución Concurrente Restringida
+            except Exception as e:
+                return FilterResult(success=False, error_type=type(e).__name__)
+
+        # Ejecucion Concurrente Restringida
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             future_to_cand = {
                 executor.submit(_validate_single, c): c for c in candidates
             }
-            
+
             for future in as_completed(future_to_cand):
-                cand = future_to_cand[future]
+                cand: DiscoveredCandidate = future_to_cand[future]
                 try:
-                    res = future.result()
-                    if isinstance(res, DiscoveredCandidate):
-                        final_survivors.append(res)
-                    elif isinstance(res, str):
-                        # Error de zona reportado
-                        zonal = cand.origin.id[:8] + "-" + cand.destination.id[:8]
+                    result: FilterResult = future.result()
+                    if result.success and result.candidate is not None:
+                        validated: DiscoveredCandidate = result.candidate
+                        final_survivors.append(validated)
+                    elif result.error_type is not None:
+                        zonal: str = cand.origin.id[:8] + "-" + cand.destination.id[:8]
                         telemetry.zonal_errors[zonal] = telemetry.zonal_errors.get(zonal, 0) + 1
                 except Exception as exc:
-                    logger.error("Error no manejado en F3 para %s->%s: %s", 
+                    logger.error("Error no manejado en F3 para %s->%s: %s",
                                  cand.origin.id, cand.destination.id, exc)
 
-        # Telemetría Final
-        t_f3_elapsed = (time.perf_counter() - t_f3_start) * 1000.0
+        # Telemetria Final
+        t_f3_elapsed: float = (time.perf_counter() - t_f3_start) * 1000.0
         telemetry.filter_3_time_ms = t_f3_elapsed
-        telemetry.total_time_ms += t_f3_elapsed
+        telemetry.total_time_ms = telemetry.total_time_ms + t_f3_elapsed
         telemetry.filter_3_survivors = len(final_survivors)
-        
+
         logger.info("\n%s", telemetry.summary())
 
-        # Generar Auditoría CSV
+        # Generar Auditoria CSV
         self._export_audit_csv(candidates, final_survivors, output_csv)
 
         return final_survivors

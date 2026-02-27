@@ -59,7 +59,7 @@ def ejecutar_prueba():
         
         logger.info("⚡ Ejecutando Loader...")
         loader = ExcelLoader(str(filename))
-        loader.run(ingestor)
+        nodes_res, fleet_res = loader.run()
 
         # REPORTE DE ERRORES (Para ver por qué fallan)
         report = ingestor.get_validation_report()

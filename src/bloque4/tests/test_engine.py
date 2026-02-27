@@ -7,9 +7,9 @@ nodes = [Node("A"), Node("B"), Node("C")]
 
 # 2. Crear aristas
 edges = [
-    Edge(edge_id="e1", source="A", target="B", cost=5.0),
-    Edge(edge_id="e2", source="B", target="C", cost=3.0),
-    Edge(edge_id="e3", source="A", target="C", cost=10.0),
+    Edge(edge_id="e1", source="A", target="B", cost=5.0, distance=1.0, mode="truck"),
+    Edge(edge_id="e2", source="B", target="C", cost=3.0, distance=1.0, mode="truck"),
+    Edge(edge_id="e3", source="A", target="C", cost=10.0, distance=2.0, mode="truck"),
 ]
 
 # 3. Crear indexer

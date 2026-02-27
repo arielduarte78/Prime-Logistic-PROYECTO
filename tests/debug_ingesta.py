@@ -35,7 +35,7 @@ def auditar_final():
         indexer = NetworkIndexer()
         ingestor = Ingestor(indexer)
         loader = ExcelLoader(str(filename))
-        loader.run(ingestor)
+        nodes_res, fleet_res = loader.run()
 
         # GENERAR MATRICES
         topo = TopologyBuilder(indexer)

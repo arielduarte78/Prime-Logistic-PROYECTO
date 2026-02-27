@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Dict, List, Mapping, Optional, Sequence, Set
 from enum import Enum
 
 # Logging para advertencias de diseño
@@ -72,7 +72,7 @@ class Edge:
 class Graph:
     nodes: List["Node"]
     edges: List["Edge"]
-    edge_indexer: Dict[str, int]
+    edge_indexer: Mapping[str, int]
 
     def edge_by_id(self, edge_id: str) -> "Edge":
         return self.edges[self.edge_indexer[edge_id]]

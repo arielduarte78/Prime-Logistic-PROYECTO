@@ -204,6 +204,16 @@ class Ingestor:
 
         origin = raw_data.get("origin")
         destination = raw_data.get("destination")
+
+        # Type Guard: origin y destination deben ser str
+        if not isinstance(origin, str) or not isinstance(destination, str):
+            self._add_system_error(
+                f"Arc {id_val}: origin/destination deben ser str, recibido "
+                f"origin={type(origin).__name__}, destination={type(destination).__name__}",
+                "ERR_ID_002", context=f"Arc {id_val}"
+            )
+            return False
+
         ref_res = NetworkValidator.validate_arc_references(origin, destination, self.indexer)
         if not ref_res.ok:
             self._log_errors(ref_res, context=f"Arc {id_val}")
@@ -345,7 +355,7 @@ class Ingestor:
                             cap_f = cap_f * float(conv)
                     mode_key = str(mode).strip().lower()
                     threshold = MODE_MAX_CAPACITY.get(mode_key, MODE_MAX_CAPACITY.get("default"))
-                    if cap_f > threshold:
+                    if threshold is not None and cap_f > threshold:
                         msg = f"Arc {id_val} capacity {cap_f} t excede umbral por modo {mode_key} ({threshold} t); se clampa en export_matrices"
                         self._add_system_error(msg, "WARN_CAP_EXCEEDS_MODE", context=f"Arc {id_val}")
                         logger.warning(msg)

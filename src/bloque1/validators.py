@@ -94,7 +94,7 @@ class NetworkValidator:
             res.add_error("ERR_GEO_001", f"Longitud {lon} fuera de rango", "lon", "HIGH", "Rango [-180, 180]")
 
         if res.ok:
-            res.normalized = {"lat": float(lat), "lon": float(lon)}
+            res.normalized = {"lat": float(lat if lat is not None else 0.0), "lon": float(lon if lon is not None else 0.0)}
         return res
 
     @staticmethod
@@ -152,6 +152,9 @@ class NetworkValidator:
             res.add_error("ERR_TIME_003", "Tipo de end inválido", "end", "MEDIUM", "Proveer ISO string o datetime")
             return res
 
+        if start_dt is None or end_dt is None:
+            res.add_error("ERR_TIME_003", "start o end no pudieron ser parseados", "window", "HIGH", "Proveer fechas válidas")
+            return res
         if start_dt >= end_dt:
             res.add_error("ERR_TIME_001", f"start >= end ({start_dt} >= {end_dt})", "window", "HIGH", "Asegurar start < end")
             return res
@@ -256,7 +259,7 @@ class NetworkValidator:
                     res.add_error("ERR_SPEED_001", f"velocidad inválida para {k}: {v}", f"speed_profile.conditional.{k}", "HIGH", "velocidad > 0")
 
         if res.ok:
-            res.normalized = {"default": float(default), "conditional": cond}
+            res.normalized = {"default": float(default if default is not None else 0.0), "conditional": cond}
         return res
 
     @staticmethod
@@ -427,9 +430,9 @@ class NetworkValidator:
         if res.ok:
             res.normalized = {
                 "mode": mode.strip().lower() if isinstance(mode, str) else mode,
-                "capacity": float(capacity),
-                "cost_per_km": float(cost_per_km),
-                "max_range_km": float(max_range_km),
+                "capacity": float(capacity if capacity is not None else 0.0),
+                "cost_per_km": float(cost_per_km if cost_per_km is not None else 0.0),
+                "max_range_km": float(max_range_km if max_range_km is not None else 0.0),
                 "allowed_stations": allowed,
             }
             # Campos opcionales
@@ -473,8 +476,10 @@ def batch_validate_rows(rows: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, An
                 result.errors.extend(geo_res.errors)
                 yield {"row": row, "result": result}
                 continue
-            result.normalized = result.normalized or {}
-            result.normalized.update({"lat": geo_res.normalized["lat"], "lon": geo_res.normalized["lon"]})
+            if result.normalized is None:
+                result.normalized = {}
+            if geo_res.normalized is not None:
+                result.normalized.update({"lat": geo_res.normalized["lat"], "lon": geo_res.normalized["lon"]})
         # Station type (Normalización Semántica)
         if "station_type" in row:
             st_res = NetworkValidator.validate_station_type(row.get("station_type"), strict=False)
@@ -483,7 +488,8 @@ def batch_validate_rows(rows: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, An
                 result.errors.extend(st_res.errors)
                 yield {"row": row, "result": result}
                 continue
-            result.normalized = result.normalized or {}
+            if result.normalized is None:
+                result.normalized = {}
             result.normalized["station_type"] = st_res.normalized
         # Cost profile
         if "cost_profile" in row:
@@ -493,7 +499,8 @@ def batch_validate_rows(rows: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, An
                 result.errors.extend(c_res.errors)
                 yield {"row": row, "result": result}
                 continue
-            result.normalized = result.normalized or {}
+            if result.normalized is None:
+                result.normalized = {}
             result.normalized["cost_profile"] = c_res.normalized
 
         # Speed profile
@@ -504,7 +511,8 @@ def batch_validate_rows(rows: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, An
                 result.errors.extend(s_res.errors)
                 yield {"row": row, "result": result}
                 continue
-            result.normalized = result.normalized or {}
+            if result.normalized is None:
+                result.normalized = {}
             result.normalized["speed_profile"] = s_res.normalized
 
         # Windows (si vienen)
@@ -529,7 +537,8 @@ def batch_validate_rows(rows: Iterable[Dict[str, Any]]) -> Iterable[Dict[str, An
             if not result.ok:
                 yield {"row": row, "result": result}
                 continue
-            result.normalized = result.normalized or {}
+            if result.normalized is None:
+                result.normalized = {}
             result.normalized["windows"] = normalized_windows
 
         yield {"row": row, "result": result}

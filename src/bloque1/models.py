@@ -1,7 +1,7 @@
 # src/bloque1/models.py
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Literal, Type, TypeVar, Union, get_origin, get_args
+from typing import List, Dict, Any, Optional, Literal, Type, TypeVar, Union, get_origin, get_args, cast
 import json
 import logging
 
@@ -47,17 +47,18 @@ ERROR_CATALOG: Dict[str, ErrorDefinition] = {
 }
 
 class PrimeLogisticsError(Exception):
-    def __init__(self, context_msg: str, error_code: str):
+    def __init__(self, context_msg: str, error_code: str) -> None:
         self.error_code = error_code
-        self.definition = ERROR_CATALOG.get(error_code)
-        self.severity = self.definition.severity if self.definition else "HIGH"
-        self.suggested_fix = self.definition.suggested_fix if self.definition else ""
-        msg = f"[{error_code}] {context_msg} -> {self.definition.message if self.definition else ''}"
+        defn = ERROR_CATALOG.get(error_code)
+        self.definition = defn
+        self.severity: str = defn.severity if defn is not None else "HIGH"
+        self.suggested_fix: str = defn.suggested_fix if defn is not None else ""
+        msg = f"[{error_code}] {context_msg} -> {defn.message if defn is not None else ''}"
         super().__init__(msg)
 
 class SerializableMixin:
     def to_dict(self) -> Dict[str, Any]:
-        def _serialize(obj):
+        def _serialize(obj: Any) -> Any:
             if isinstance(obj, dict):
                 return {k: _serialize(v) for k, v in obj.items()}
             if isinstance(obj, list):
@@ -65,17 +66,20 @@ class SerializableMixin:
             if isinstance(obj, datetime):
                 return obj.isoformat()
             return obj
-        return _serialize(asdict(self))
+        raw: Dict[str, Any] = asdict(self)  # type: ignore[call-overload]
+        result = _serialize(raw)
+        assert isinstance(result, dict)
+        return result
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
 
     @classmethod
-    def from_dict(cls: Type[T], data: Optional[Dict[str, Any]]) -> Optional[T]:
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Any:
         if data is None:
             return None
 
-        annotations = getattr(cls, "__annotations__", {})
+        annotations = cast(Dict[str, Any], getattr(cls, "__annotations__", {}))
         processed: Dict[str, Any] = {}
 
         for key, value in data.items():
@@ -83,7 +87,7 @@ class SerializableMixin:
                 processed[key] = value
                 continue
 
-            ftype = annotations[key]
+            ftype: Any = annotations[key]
             origin = get_origin(ftype)
             args = get_args(ftype)
 
@@ -125,7 +129,7 @@ class Metadata(SerializableMixin):
     extras: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "Metadata":
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "Metadata":  # type: ignore[override]
         if data is None:
             return cls()
         d = dict(data)
@@ -146,8 +150,9 @@ class Metadata(SerializableMixin):
             out["source"] = self.source
         if self.version is not None:
             out["version"] = self.version
-        if self.timestamp is not None:
-            out["timestamp"] = self.timestamp.isoformat()
+        ts = self.timestamp
+        if ts is not None:
+            out["timestamp"] = ts.isoformat()
         for k, v in self.extras.items():
             if k not in out:
                 out[k] = v
@@ -159,7 +164,7 @@ class Window(SerializableMixin):
     end: datetime
     is_recurrent: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.start.tzinfo is None:
             logger.debug("Assuming UTC for naive Window.start")
             object.__setattr__(self, "start", self.start.replace(tzinfo=timezone.utc))
@@ -174,7 +179,7 @@ class CostProfile(SerializableMixin):
     cost_type: Literal["flat", "bracket", "curve", "ref"]
     params: Dict[str, Any]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         t = self.cost_type
         p = self.params or {}
         if t == "flat":
@@ -211,7 +216,7 @@ class SpeedProfile(SerializableMixin):
     default: float
     conditional: Dict[str, float] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.default, (int, float)) or self.default <= 0:
             raise PrimeLogisticsError(f"default speed invalid: {self.default}", "ERR_SPEED_001")
         for k, v in self.conditional.items():
@@ -230,7 +235,7 @@ class NodeRecord(SerializableMixin):
     priority: int = 0
     metadata: Optional[Metadata] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not (-90 <= self.lat <= 90) or not (-180 <= self.lon <= 180):
             raise PrimeLogisticsError(f"Coords ({self.lat}, {self.lon})", "ERR_GEO_001")
         if self.processing_cost < 0:
@@ -253,6 +258,6 @@ class ArcRecord(SerializableMixin):
 
     
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.origin == self.destination:
             raise PrimeLogisticsError(f"Bucle en {self.id}", "ERR_ARC_001")

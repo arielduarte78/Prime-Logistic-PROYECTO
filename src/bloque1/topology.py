@@ -1,6 +1,11 @@
 # src/bloque1/topology.py
+from __future__ import annotations
+
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .network import NetworkIndexer
 import numpy as np
 from scipy.sparse import csr_matrix
 
@@ -33,16 +38,16 @@ def vectorized_haversine(lat1, lon1, lat2, lon2):
 class TopologyBuilder:
     """Fábrica de Matrices: Traduce el mundo físico a matemática pura."""
     
-    def __init__(self, indexer):
+    def __init__(self, indexer: "NetworkIndexer") -> None:
         self.indexer = indexer
         self._node_order: List[str] = []
-        self._built = False
+        self._built: bool = False
         # Contenedores de matrices base
-        self.A = None
-        self.C = None
-        self.T = None
-        self.K = None
-        self.D = None
+        self.A: Optional[Any] = None
+        self.C: Optional[Any] = None
+        self.T: Optional[Any] = None
+        self.K: Optional[Any] = None
+        self.D: Optional[Any] = None
 
     def build_topology(self) -> None:
         """Paso 1: Indexar nodos y validar estructura."""
@@ -88,28 +93,32 @@ class TopologyBuilder:
             # -------------------------------------------------------
             # 2. Perfil de Velocidad y Modo (CORREGIDO MULTI-MODAL)
             # -------------------------------------------------------
-            mode = "truck" # Default seguro
-            
+            mode: str = "truck"  # Default seguro
+
             # Intentamos extraer el modo real de la metadata
-            if arc.metadata:
-                if hasattr(arc.metadata, "extras") and isinstance(arc.metadata.extras, dict):
-                     # Caso normal: Metadata es objeto y tiene dict extras
-                     mode = arc.metadata.extras.get("mode", "truck")
-                elif isinstance(arc.metadata, dict):
-                     # Caso borde: Metadata es un dict directo
-                     mode = arc.metadata.get("mode", "truck")
+            # Cadena de null-checks para evitar AttributeError/TypeError
+            arc_meta = getattr(arc, "metadata", None)
+            if arc_meta is not None:
+                if hasattr(arc_meta, "extras"):
+                    extras = getattr(arc_meta, "extras", None)
+                    if isinstance(extras, dict):
+                        mode = str(extras.get("mode", "truck"))
+                elif isinstance(arc_meta, dict):
+                    mode = str(arc_meta.get("mode", "truck"))
 
             # Normalizamos (ej: "Avion" -> "avion") para matchear config
-            mode = str(mode).strip().lower()
+            mode = mode.strip().lower()
 
             # Buscamos velocidad base en config (ej: air=800, truck=80)
-            speed_default = MODE_AVG_SPEED_KMH.get("default", 50.0)
-            speed_base = MODE_AVG_SPEED_KMH.get(mode, speed_default)
+            speed_default: float = float(MODE_AVG_SPEED_KMH.get("default", 50.0))
+            speed_base: float = float(MODE_AVG_SPEED_KMH.get(mode, speed_default))
 
-            # Si el arco tiene un perfil de velocidad específico (override), lo usamos
-            if hasattr(arc, "speed_profile") and arc.speed_profile:
-                if hasattr(arc.speed_profile, "default") and arc.speed_profile.default > 0:
-                     speed_base = arc.speed_profile.default
+            # Si el arco tiene un perfil de velocidad especifico (override), lo usamos
+            arc_speed = getattr(arc, "speed_profile", None)
+            if arc_speed is not None:
+                sp_default = getattr(arc_speed, "default", 0.0)
+                if isinstance(sp_default, (int, float)) and sp_default > 0:
+                    speed_base = float(sp_default)
 
             speeds.append(speed_base)
             # -------------------------------------------------------
@@ -119,11 +128,17 @@ class TopologyBuilder:
             lon_u.append(origin.lon)
             lat_v.append(dest.lat)
             lon_v.append(dest.lon)
-            
+
             # 4. Coeficiente de Costo Variable
-            var_coef = 1.0
-            if hasattr(arc, 'cost_profile') and arc.cost_profile:
-                var_coef = getattr(arc.cost_profile, 'variable_coef', 1.0)
+            var_coef: float = 1.0
+            arc_cost_profile = getattr(arc, "cost_profile", None)
+            if arc_cost_profile is not None:
+                # Buscar variable_coef en params (dict) o como atributo directo
+                params = getattr(arc_cost_profile, "params", None)
+                if isinstance(params, dict):
+                    var_coef = float(params.get("variable_coef", 1.0))
+                else:
+                    var_coef = float(getattr(arc_cost_profile, "variable_coef", 1.0))
             d_cost.append(var_coef)
 
         # CÁLCULOS VECTORIZADOS (NumPy Power)
@@ -149,9 +164,11 @@ class TopologyBuilder:
                 vec_d[i] = float(getattr(node, "demand", 0.0)) - float(getattr(node, "supply", 0.0))
 
         # METADATOS PARA EL BLOQUE 2
+        K_arr = np.asarray(K.toarray() if hasattr(K, 'toarray') else K)
+        A_arr = np.asarray(A.toarray() if hasattr(A, 'toarray') else A)
         meta = {
-            "base_k_sum": np.sum(K[np.isfinite(K)]),
-            "base_a_sum": np.sum(A > 0),
+            "base_k_sum": float(np.sum(K_arr[np.isfinite(K_arr)])),
+            "base_a_sum": int(np.sum(A_arr > 0)),
             "units": {"distance": "km", "time": "hours"}
         }
 

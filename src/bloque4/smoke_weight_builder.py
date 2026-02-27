@@ -4,7 +4,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from bloque4.schema import Edge
-from bloque4.weight_builder import build_weights
+from bloque4.weight_builder import build_edge_weights as build_weights
 import math
 
 edges = [
