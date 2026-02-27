@@ -88,6 +88,17 @@ class NetworkIndexer:
             self._arcs[arc.id] = arc
             logger.debug("Arc registrado: %s", arc.id)
 
+    def register_discovered_arc(self, arc: ArcRecord) -> None:
+        """
+        Registra un arco descubierto por el DiscoveryEngine.
+        Bypass directo: no pasa por las validaciones de Ingestor
+        ya que el DiscoveryEngine ya lo validó (Filtros 1/2/3).
+        """
+        with self._lock:
+            self._arcs[arc.id] = arc
+            logger.debug("Arc descubierto registrado: %s (%s -> %s)",
+                         arc.id, arc.origin, arc.destination)
+
     @property
     def node_count(self) -> int:
         with self._lock:

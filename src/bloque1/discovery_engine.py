@@ -135,18 +135,18 @@ class PipelineTelemetry:
             err_str = "\n  Errores F3        :\n" + "\n".join(f"    {k}: {v}" for k, v in self.zonal_errors.items())
 
         return (
-            f"═══ Discovery Pipeline Telemetry ═══\n"
-            f"  Vehículos evaluados : {self.vehicles_processed}\n"
+            f"=== Discovery Pipeline Telemetry ===\n"
+            f"  Vehiculos evaluados : {self.vehicles_processed}\n"
             f"  Total pares entrada : {self.total_input_pairs:,}\n"
-            f"  Filtro 1 (Semántico): {self.filter_1_survivors:,}  ({f1_rate} pasan)\n"
+            f"  Filtro 1 (Semantico): {self.filter_1_survivors:,}  ({f1_rate} pasan)\n"
             f"  Filtro 2 (Rango)    : {self.filter_2_survivors:,}  ({f2_rate} pasan)\n"
-            f"  Filtro 3 (Físico)   : {self.filter_3_survivors:,}  ({f3_rate} pasan)\n"
+            f"  Filtro 3 (Fisico)   : {self.filter_3_survivors:,}  ({f3_rate} pasan)\n"
             f"  Tasa supervivencia  : {overall}\n"
             f"  Tiempo F1           : {self.filter_1_time_ms:.1f} ms\n"
             f"  Tiempo F2           : {self.filter_2_time_ms:.1f} ms\n"
             f"  Tiempo F3           : {self.filter_3_time_ms:.1f} ms\n"
             f"  Tiempo total        : {self.total_time_ms:.1f} ms{err_str}\n"
-            f"════════════════════════════════════"
+            f"===================================="
         )
 
 
@@ -400,10 +400,10 @@ class DiscoveryEngine:
         logger.info("Matriz cdist calculada en %.1f ms.", t_dist_elapsed)
 
         all_candidates: List[DiscoveredCandidate] = []
-        total_f1_survivors = 0
-        total_f2_survivors = 0
-        t_f1_total = 0.0
-        t_f2_total = 0.0
+        total_f1_survivors: int = 0
+        total_f2_survivors: int = 0
+        t_f1_total: float = 0.0
+        t_f2_total: float = 0.0
 
         for vehicle in self._fleet:
             vid = vehicle.vehicle_id or vehicle.mode
