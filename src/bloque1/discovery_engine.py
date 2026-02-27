@@ -165,22 +165,7 @@ class PipelineTelemetry:
         )
 
 
-# =====================================================================
-# FUNCIÓN DE DISTANCIA HAVERSINE PARA cdist
-# =====================================================================
 
-def _haversine_rad(u: np.ndarray, v: np.ndarray) -> float:
-    """
-    Distancia Haversine entre dos puntos (lat_rad, lon_rad).
-
-    Diseñada como métrica personalizada para scipy.spatial.distance.cdist.
-    Recibe arrays de 2 elementos: [lat_rad, lon_rad].
-    Retorna distancia en kilómetros.
-    """
-    dlat = v[0] - u[0]
-    dlon = v[1] - u[1]
-    a = np.sin(dlat * 0.5) ** 2 + np.cos(u[0]) * np.cos(v[0]) * np.sin(dlon * 0.5) ** 2
-    return _EARTH_RADIUS_KM * 2.0 * np.arcsin(np.sqrt(a))
 
 
 # =====================================================================
@@ -240,12 +225,10 @@ class DiscoveryEngine:
 
     def _compute_distance_matrix(self) -> np.ndarray:
         """
-        Calcula la matriz de distancias Haversine N×N usando cdist.
+        Calcula la matriz de distancias Haversine N×N.
 
-        Convierte coordenadas a radianes y delega en
-        scipy.spatial.distance.cdist con métrica Haversine personalizada.
-        La iteración de pares ocurre en código C compilado de SciPy,
-        NO en bucles for de Python.
+        Usa estricta vectorización pura de NumPy (broadcasting) para garantizar CERO
+        bucles `for` nativos (ni implícitos vía callbacks map).
 
         Returns
         -------
@@ -257,7 +240,7 @@ class DiscoveryEngine:
 
         n = len(self._nodes)
         logger.info(
-            "Calculando matriz de distancias Haversine %dx%d via cdist...", n, n
+            "Calculando matriz de distancias Haversine %dx%d puramente vectorizada...", n, n
         )
 
         # Extraer coordenadas y convertir a radianes
@@ -267,12 +250,21 @@ class DiscoveryEngine:
         )
         coords_rad = np.radians(coords_deg)
 
-        # cdist: una sola llamada, todo el cálculo en bloque de memoria C.
-        # La función _haversine_rad se invoca desde C para cada par.
-        self._dist_matrix = cdist(coords_rad, coords_rad, metric=_haversine_rad)
+        # Vectorización Estricta vía Broadcasting O(N^2)
+        lat = coords_rad[:, 0]
+        lon = coords_rad[:, 1]
+        
+        dlat = lat[:, np.newaxis] - lat[np.newaxis, :]
+        dlon = lon[:, np.newaxis] - lon[np.newaxis, :]
+        
+        a = (np.sin(dlat / 2.0) ** 2 +
+             np.cos(lat[:, np.newaxis]) * np.cos(lat[np.newaxis, :]) * np.sin(dlon / 2.0) ** 2)
+        
+        c = 2.0 * np.arcsin(np.sqrt(np.clip(a, 0.0, 1.0)))
+        self._dist_matrix = _EARTH_RADIUS_KM * c
 
         logger.info(
-            "Matriz de distancias calculada: %.0f pares en bloque C.",
+            "Matriz de distancias calculada: %.0f pares vectorizados en memoria.",
             n * n,
         )
         return self._dist_matrix
@@ -543,7 +535,7 @@ class DiscoveryEngine:
                 return FilterResult(success=False, error_type=type(e).__name__)
 
         # Ejecucion Concurrente Restringida
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor:
             future_to_cand = {
                 executor.submit(_validate_single, c): c for c in candidates
             }

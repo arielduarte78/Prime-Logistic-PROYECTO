@@ -56,3 +56,5 @@ __pycache__/
 # Datos temporales de tu proyecto
 tmp_*.parquet
 tests/temp_h3_cache_*/
+.prime_cache_smoke/
+smoke_discovery_audit.csv
