@@ -34,3 +34,9 @@ coverage.xml
 
 # PyCharm
 .idea/
+
+# Caché de mapas OSMnx y telemetría
+data/osm_cache/
+output/
+*.lock
+*.tmp

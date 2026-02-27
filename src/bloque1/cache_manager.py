@@ -72,6 +72,10 @@ class SafeCacheManager:
             # Cualquier otra cosa (Listas, LineStrings, Polígonos) se vuelve texto
             return str(val)
 
+        # Copiar atributos a nivel grafo (ej. crs)
+        for k, v in graph.graph.items():
+            G.graph[k] = clean_value(v)
+
         # Copiar nodos limpiando la basura
         for n, data in graph.nodes(data=True):
             attrs = {k: clean_value(v) for k, v in data.items()}
@@ -242,7 +246,10 @@ class SafeCacheManager:
 
                         with open(tmp_graph_path, "rb") as fh:
                             fh.flush()
-                            os.fsync(fh.fileno())
+                            try:
+                                os.fsync(fh.fileno())
+                            except OSError:
+                                pass
 
                         checksum = self._file_checksum(tmp_graph_path)
 
@@ -268,7 +275,10 @@ class SafeCacheManager:
                         with open(tmp_meta_path, "w", encoding="utf-8") as f:
                             json.dump(meta, f)
                             f.flush()
-                            os.fsync(f.fileno())
+                            try:
+                                os.fsync(f.fileno())
+                            except OSError:
+                                pass
 
                         # 5. Movimientos atómicos con fallback y permisos
                         try:
@@ -425,7 +435,7 @@ class SafeCacheManager:
 
                     # Asegurar que sea MultiDiGraph preservando keys
                     if not isinstance(G, nx.MultiDiGraph):
-                        H = nx.MultiDiGraph()
+                        H = nx.MultiDiGraph(**G.graph)
                         for n, data in G.nodes(data=True):
                             H.add_node(n, **data)
                         try:

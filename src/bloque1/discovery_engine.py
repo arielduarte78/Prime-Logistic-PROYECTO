@@ -19,13 +19,16 @@ from __future__ import annotations
 
 import logging
 import time
+import csv
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.spatial.distance import cdist
 
-from .config import SAFETY_FACTORS
+from .config import SAFETY_FACTORS, MAX_WORKERS
 from .fleet_schema import FleetVehicle
 from .models import NodeRecord
 
@@ -61,11 +64,13 @@ class DiscoveredCandidate:
     destination: NodeRecord
     vehicle: FleetVehicle
     estimated_distance_km: float
+    physical_distance_km: float = -1.0
 
-    def as_tuple(self) -> Tuple[str, str, str, float]:
-        """Retorna (origin_id, dest_id, vehicle_mode, distance_km)."""
+    def as_tuple(self) -> Tuple[str, str, str, float, float]:
+        """Retorna (origin_id, dest_id, vehicle_mode, est_dist, phys_dist)."""
         vid = self.vehicle.vehicle_id or self.vehicle.mode
-        return (self.origin.id, self.destination.id, vid, self.estimated_distance_km)
+        return (self.origin.id, self.destination.id, vid, 
+                self.estimated_distance_km, self.physical_distance_km)
 
 
 @dataclass
@@ -98,8 +103,10 @@ class PipelineTelemetry:
     total_input_pairs: int = 0
     filter_1_survivors: int = 0
     filter_2_survivors: int = 0
+    filter_3_survivors: int = 0
     filter_1_time_ms: float = 0.0
     filter_2_time_ms: float = 0.0
+    filter_3_time_ms: float = 0.0
     total_time_ms: float = 0.0
     vehicles_processed: int = 0
     zonal_errors: Dict[str, int] = field(default_factory=dict)
@@ -114,20 +121,31 @@ class PipelineTelemetry:
             f"{self.filter_2_survivors / self.filter_1_survivors * 100:.1f}%"
             if self.filter_1_survivors > 0 else "N/A"
         )
+        f3_rate = (
+            f"{self.filter_3_survivors / self.filter_2_survivors * 100:.1f}%"
+            if self.filter_2_survivors > 0 else "N/A"
+        )
         overall = (
-            f"{self.filter_2_survivors / self.total_input_pairs * 100:.2f}%"
+            f"{self.filter_3_survivors / self.total_input_pairs * 100:.2f}%"
             if self.total_input_pairs > 0 else "N/A"
         )
+        
+        err_str = ""
+        if self.zonal_errors:
+            err_str = "\n  Errores F3        :\n" + "\n".join(f"    {k}: {v}" for k, v in self.zonal_errors.items())
+
         return (
             f"═══ Discovery Pipeline Telemetry ═══\n"
             f"  Vehículos evaluados : {self.vehicles_processed}\n"
             f"  Total pares entrada : {self.total_input_pairs:,}\n"
             f"  Filtro 1 (Semántico): {self.filter_1_survivors:,}  ({f1_rate} pasan)\n"
             f"  Filtro 2 (Rango)    : {self.filter_2_survivors:,}  ({f2_rate} pasan)\n"
+            f"  Filtro 3 (Físico)   : {self.filter_3_survivors:,}  ({f3_rate} pasan)\n"
             f"  Tasa supervivencia  : {overall}\n"
             f"  Tiempo F1           : {self.filter_1_time_ms:.1f} ms\n"
             f"  Tiempo F2           : {self.filter_2_time_ms:.1f} ms\n"
-            f"  Tiempo total        : {self.total_time_ms:.1f} ms\n"
+            f"  Tiempo F3           : {self.filter_3_time_ms:.1f} ms\n"
+            f"  Tiempo total        : {self.total_time_ms:.1f} ms{err_str}\n"
             f"════════════════════════════════════"
         )
 
@@ -451,3 +469,135 @@ class DiscoveryEngine:
         logger.info("\n%s", telemetry.summary())
 
         return all_candidates, telemetry
+
+    # -----------------------------------------------------------------
+    # FILTRO 3: VALIDACIÓN FÍSICA (OSMnx / Dijkstra)
+    # -----------------------------------------------------------------
+
+    def run_filter_3(
+        self,
+        candidates: List[DiscoveredCandidate],
+        ingestor,
+        telemetry: PipelineTelemetry,
+        output_csv: str = "discovery_audit.csv"
+    ) -> List[DiscoveredCandidate]:
+        """
+        Filtro 3 — Validación Física Viaria.
+
+        Toma los candidatos que sobrevivieron F1 y F2, y los valida contra 
+        la realidad física (OpenStreetMap) usando el SmartLazyIngestor.
+        
+        RESTRICCIÓN: Usa ThreadPoolExecutor con max_workers estricto
+        (definido en config.py) para no saturar la API de OSM.
+
+        Genera discovery_audit.csv al finalizar.
+        """
+        if not candidates:
+            logger.info("Filtro 3: No hay candidatos para validar.")
+            return []
+
+        logger.info("🚀 Iniciando Filtro 3: Validación Física para %d candidatos (max_workers=%d)", 
+                    len(candidates), MAX_WORKERS)
+        
+        t_f3_start = time.perf_counter()
+        final_survivors: List[DiscoveredCandidate] = []
+        
+        from .h3_router import RouteEndpoint
+        
+        def _validate_single(candidate: DiscoveredCandidate):
+            o_node = candidate.origin
+            d_node = candidate.destination
+            
+            orig_ep = RouteEndpoint(name=o_node.id, lat=o_node.lat, lon=o_node.lon)
+            dest_ep = RouteEndpoint(name=d_node.id, lat=d_node.lat, lon=d_node.lon)
+            
+            try:
+                # Usa caché de Dijkstra en memoria o descarga OSMnx con backoff
+                phys_dist = ingestor.validate_physical_connection(
+                    origin=orig_ep,
+                    dest=dest_ep,
+                    mode=candidate.vehicle.mode
+                )
+                candidate.physical_distance_km = phys_dist
+                # Regla Física F3: La ruta debe existir (phys_dist > 0)
+                # y ser factible para el rango del vehículo
+                if phys_dist > 0 and phys_dist <= candidate.vehicle.max_range_km:
+                    candidate.physical_distance_km = phys_dist
+                    return candidate
+                else:
+                    return None
+                    
+            except Exception as e:
+                err_type = type(e).__name__
+                return err_type
+
+        # Ejecución Concurrente Restringida
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_cand = {
+                executor.submit(_validate_single, c): c for c in candidates
+            }
+            
+            for future in as_completed(future_to_cand):
+                cand = future_to_cand[future]
+                try:
+                    res = future.result()
+                    if isinstance(res, DiscoveredCandidate):
+                        final_survivors.append(res)
+                    elif isinstance(res, str):
+                        # Error de zona reportado
+                        zonal = cand.origin.id[:8] + "-" + cand.destination.id[:8]
+                        telemetry.zonal_errors[zonal] = telemetry.zonal_errors.get(zonal, 0) + 1
+                except Exception as exc:
+                    logger.error("Error no manejado en F3 para %s->%s: %s", 
+                                 cand.origin.id, cand.destination.id, exc)
+
+        # Telemetría Final
+        t_f3_elapsed = (time.perf_counter() - t_f3_start) * 1000.0
+        telemetry.filter_3_time_ms = t_f3_elapsed
+        telemetry.total_time_ms += t_f3_elapsed
+        telemetry.filter_3_survivors = len(final_survivors)
+        
+        logger.info("\n%s", telemetry.summary())
+
+        # Generar Auditoría CSV
+        self._export_audit_csv(candidates, final_survivors, output_csv)
+
+        return final_survivors
+
+    def _export_audit_csv(self, f2_candidates: List[DiscoveredCandidate], 
+                          f3_survivors: List[DiscoveredCandidate], out_path: str):
+        """Genera el reporte final discovery_audit.csv."""
+        survivor_keys = { (c.origin.id, c.destination.id, c.vehicle.vehicle_id) for c in f3_survivors }
+        
+        try:
+            with open(out_path, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "origin_id", "destination_id", "vehicle_id", "vehicle_mode",
+                    "est_haversine_km", "physical_road_km", "status", "reason"
+                ])
+                
+                for c in f2_candidates:
+                    vid = c.vehicle.vehicle_id or c.vehicle.mode
+                    is_survivor = (c.origin.id, c.destination.id, vid) in survivor_keys
+                    
+                    status = "ACCEPTED" if is_survivor else "REJECTED"
+                    
+                    reason = ""
+                    if not is_survivor:
+                        if c.physical_distance_km == -1.0:
+                            reason = "UNREACHABLE_OR_ERROR (Filter 3)"
+                        elif c.physical_distance_km > c.vehicle.max_range_km:
+                            reason = f"ROAD_EXCEEDS_RANGE ({c.physical_distance_km:.1f} > {c.vehicle.max_range_km})"
+                        else:
+                            reason = "FILTERED_F3"
+                    
+                    p_dist_str = f"{c.physical_distance_km:.2f}" if c.physical_distance_km > 0 else "N/A"
+                    
+                    writer.writerow([
+                        c.origin.id, c.destination.id, vid, c.vehicle.mode,
+                        f"{c.estimated_distance_km:.2f}", p_dist_str, status, reason
+                    ])
+            logger.info("Auditoría guardada exitosamente en %s", out_path)
+        except Exception as e:
+            logger.error("Error escribiendo %s: %s", out_path, e)
