@@ -12,9 +12,9 @@ from shapely.ops import unary_union
 from filelock import FileLock, Timeout
 
 # Importamos las piezas que ya construimos
-from src.bloque1.config import H3RouterConfig
-from src.bloque1.h3_router import RouteEndpoint, build_h3_corridor, split_cells
-from src.bloque1.cache_manager import SafeCacheManager
+from .config import H3RouterConfig
+from .h3_router import RouteEndpoint, build_h3_corridor, split_cells
+from .cache_manager import SafeCacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,11 @@ class SmartLazyIngestor:
         self.download_lock_dir = cache_manager.lock_dir / "downloads"
         self.download_lock_dir.mkdir(parents=True, exist_ok=True)
 
+        # Caché en memoria para cálculos de Dijkstra (Filter 3)
+        # Clave: (origin_id, dest_id, mode, resolution, buffer_rings)
+        # Valor: distancia en km (float) o -1.0 si es inalcanzable
+        self._dijkstra_cache: dict[tuple, float] = {}
+
     # ----------------------------------------------------------------------
     # Métricas (hook a cache manager, que a su vez tiene _emit_metric)
     # ----------------------------------------------------------------------
@@ -48,19 +53,43 @@ class SmartLazyIngestor:
         self.cache._emit_metric(name, value, labels)
 
     # ----------------------------------------------------------------------
-    # Adaptador para graph_from_polygon (compatible OSMnx v1 y v2)
+    # Adaptador para graph_from_polygon (compatible OSMnx v1 y v2) con BACKOFF
     # ----------------------------------------------------------------------
     def _graph_from_polygon_adapter(self, polygon, **kwargs):
         """
         Intenta usar la API moderna (osmnx >= 2.0) y fallback a la clásica (1.x).
+        Implementa Strict Exponential Backoff para protección contra HTTP 429.
         """
-        try:
-            # Intentar con la nueva ubicación (osmnx.graph.graph_from_polygon)
-            from osmnx import graph
-            return graph.graph_from_polygon(polygon, **kwargs)
-        except (ImportError, AttributeError):
-            # Fallback a la función original (osmnx 1.x)
-            return ox.graph_from_polygon(polygon, **kwargs)
+        max_retries = 5
+        base_delay = 2.0
+
+        for attempt in range(max_retries):
+            try:
+                # Intentar con la nueva ubicación (osmnx.graph.graph_from_polygon)
+                from osmnx import graph
+                return graph.graph_from_polygon(polygon, **kwargs)
+            except (ImportError, AttributeError):
+                # Fallback a la función original (osmnx 1.x)
+                try:
+                    return ox.graph_from_polygon(polygon, **kwargs)
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        sleep_time = base_delay * (2 ** attempt)
+                        logger.warning("OSMnx error (intento %d/%d): %s. Backoff %.1fs...", 
+                                       attempt + 1, max_retries, str(e)[:100], sleep_time)
+                        time.sleep(sleep_time)
+                        continue
+                    raise
+            except Exception as e:
+                # Otros errores de red/API (ej. HTTP 429 Too Many Requests)
+                if attempt < max_retries - 1:
+                    sleep_time = base_delay * (2 ** attempt)
+                    logger.warning("OSMnx API error (intento %d/%d): %s. Backoff %.1fs...", 
+                                   attempt + 1, max_retries, str(e)[:100], sleep_time)
+                    time.sleep(sleep_time)
+                    continue
+                logger.error("Fallo definitivo de OSMnx tras %d intentos.", max_retries)
+                raise
 
     # ----------------------------------------------------------------------
     # Conversión de celdas a polígono (con manejo seguro de errores)
@@ -361,3 +390,76 @@ class SmartLazyIngestor:
                 "cells": cells_label
             })
             raise
+
+    # ----------------------------------------------------------------------
+    # V1.3.5: Validación Física (Filter 3)
+    # ----------------------------------------------------------------------
+
+    def validate_physical_connection(
+        self,
+        origin: RouteEndpoint,
+        dest: RouteEndpoint,
+        mode: str = "truck"
+    ) -> float:
+        """
+        Filter 3: Valida físicamente la conexión descargando/recuperando la red OSM
+        y calculando la distancia real por carretera mediante Dijkstra.
+
+        Utiliza un caché en memoria (_dijkstra_cache) para evitar recálculos
+        redundantes del mismo par bajo las mismas condiciones.
+
+        Parameters
+        ----------
+        origin : RouteEndpoint
+            Punto de origen.
+        dest : RouteEndpoint
+            Punto de destino.
+        mode : str
+            Modo de transporte (afecta la topología descargada).
+
+        Returns
+        -------
+        float
+            Distancia tramo por calle en kilómetros.
+            Retorna -1.0 si los nodos no están conectados o en caso de error de red.
+        """
+        # 1. Check in-memory Dijkstra cache
+        cache_key = (origin.name, dest.name, mode, self.config.resolution, self.config.buffer_rings)
+        if cache_key in self._dijkstra_cache:
+            return self._dijkstra_cache[cache_key]
+
+        try:
+            # 2. Obtener el grafo (Caché disco o OSMnx downlaod con backoff)
+            G = self.get_or_build_graph(origin, dest, mode)
+
+            if G.number_of_nodes() == 0:
+                logger.warning("Grafo vacío para %s -> %s", origin.name, dest.name)
+                self._dijkstra_cache[cache_key] = -1.0
+                return -1.0
+
+            # 3. Encontrar el nodo OSM más cercano al origen y destino real (lat, lon)
+            # osmnx.distance.nearest_nodes busca el nodo de la red más próximo a (lon, lat)
+            orig_node = ox.distance.nearest_nodes(G, origin.lon, origin.lat)
+            dest_node = ox.distance.nearest_nodes(G, dest.lon, dest.lat)
+
+            # 4. Calcular el camino más corto (Dijkstra) usando la longitud física de la calle
+            # 'length' es el atributo estándar de osmnx en metros
+            distance_meters = nx.shortest_path_length(G, orig_node, dest_node, weight='length')
+            
+            distance_km = distance_meters / 1000.0
+            
+            # Guardamos en caché en memoria y retornamos
+            self._dijkstra_cache[cache_key] = distance_km
+            logger.info("Filter 3 completado: %s -> %s = %.2f km (por calle)", 
+                        origin.name, dest.name, distance_km)
+            return distance_km
+
+        except nx.NetworkXNoPath:
+            logger.warning("No hay camino físico posible entre %s y %s en el grafo descargado.", 
+                           origin.name, dest.name)
+            self._dijkstra_cache[cache_key] = -1.0
+            return -1.0
+        except Exception as e:
+            logger.error("Error en Filter 3 (%s -> %s): %s", origin.name, dest.name, str(e))
+            self._dijkstra_cache[cache_key] = -1.0
+            return -1.0
