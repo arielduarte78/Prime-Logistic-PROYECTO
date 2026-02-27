@@ -40,3 +40,19 @@ data/osm_cache/
 output/
 *.lock
 *.tmp
+
+# Entornos virtuales
+venv/
+source/
+env/
+bin/
+lib/
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Datos temporales de tu proyecto
+tmp_*.parquet
+tests/temp_h3_cache_*/
