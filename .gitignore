@@ -58,3 +58,15 @@ tmp_*.parquet
 tests/temp_h3_cache_*/
 .prime_cache_smoke/
 smoke_discovery_audit.csv
+
+# ==========================================
+# CACHÉ DE INFRAESTRUCTURA GEOGRÁFICA
+# ==========================================
+data/osmnx_http_cache/
+
+# ==========================================
+# ARTEFACTOS GENERADOS DINÁMICAMENTE (Outputs)
+# ==========================================
+output/*.csv
+output/*.pkl
+output/*.json
