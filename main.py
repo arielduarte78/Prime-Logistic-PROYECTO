@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-# main.py — Orquestador maestro V1.3.5 (Discovery Engine + Motor multiobjetivo)
+# main.py — Orquestador maestro V1.3.5 (Agnostic CLI Orchestrator)
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 import logging
 import pickle
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -45,15 +46,7 @@ logger = logging.getLogger(__name__)
 # Velocidades promedio por modo (km/h) para calculo de travel_time
 AVG_SPEED_KMH: Dict[str, float] = {"truck": 60.0, "car": 80.0, "bus": 50.0}
 
-
-# -------------------------
-# Conversion de candidatos descubiertos a ArcRecord formales
-# -------------------------
 def candidates_to_arc_records(survivors: List[DiscoveredCandidate]) -> List[ArcRecord]:
-    """
-    Convierte una lista de DiscoveredCandidate (que sobrevivieron F1/F2/F3)
-    en ArcRecord formales listos para inyectar en el NetworkIndexer.
-    """
     arcs: List[ArcRecord] = []
     for cand in survivors:
         mode: str = cand.vehicle.mode
@@ -86,47 +79,39 @@ def candidates_to_arc_records(survivors: List[DiscoveredCandidate]) -> List[ArcR
             ),
         )
         arcs.append(arc)
-
     return arcs
 
-
-# -------------------------
-# Pipeline principal V1.3.5
-# -------------------------
-def ejecutar_pipeline() -> None:
+def run_pipeline(dataset_path: str, source: Optional[str] = None, target: Optional[str] = None) -> None:
     setup_logging()
     base_path = os.path.dirname(os.path.abspath(__file__))
     src_path = os.path.join(base_path, "src")
 
-    # Archivo por defecto: nuevo dataset V1.3.5
-    if len(sys.argv) > 1:
-        nombre_archivo = sys.argv[1]
-    else:
-        nombre_archivo = "realistic_network_v135.xlsx"
-        logger.info("[INFO] Usando dataset V1.3.5: %s", nombre_archivo)
-
     logger.info("\n" + "=" * 80)
-    logger.info("PRIME LOGISTICS V1.3.5 - DISCOVERY ENGINE")
+    logger.info("PRIME LOGISTICS V1.3.5 - DISCOVERY ENGINE & AGNOSTIC ORCHESTRATOR")
     logger.info("=" * 80)
 
-    excel_path = os.path.join(base_path, "data", nombre_archivo)
-    if not os.path.exists(excel_path):
-        logger.error("[ERROR] No existe %s", excel_path)
-        sys.exit(1)
+    if not os.path.exists(dataset_path):
+        # Fallback al directorio data/ si se paso un nombre de archivo relativo corto
+        dataset_path_alt = os.path.join(base_path, "data", dataset_path)
+        if os.path.exists(dataset_path_alt):
+            dataset_path = dataset_path_alt
+        else:
+            logger.error("[ERROR] No existe el dataset en la ruta especificada: %s", dataset_path)
+            sys.exit(1)
 
     # ==================================================================
     # BLOQUE 1: Ingesta V1.3.5 (NODES + FLEET, sin ARCS manuales)
     # ==================================================================
-    logger.info("\n1. [BLOQUE 1] Cargando NODES y FLEET desde %s...", nombre_archivo)
-    loader = ExcelLoader(excel_path)
+    logger.info("\n1. [BLOQUE 1] Cargando NODES y FLEET desde %s...", dataset_path)
+    loader = ExcelLoader(dataset_path)
     nodes, fleet = loader.run()
 
     if not nodes:
         logger.error("[ERROR CRITICO] 0 nodos cargados.")
-        return
+        sys.exit(1)
     if not fleet:
         logger.error("[ERROR CRITICO] 0 vehiculos cargados.")
-        return
+        sys.exit(1)
 
     logger.info("   Nodos cargados : %d", len(nodes))
     logger.info("   Vehiculos flota: %d", len(fleet))
@@ -135,17 +120,8 @@ def ejecutar_pipeline() -> None:
     indexer = NetworkIndexer()
     ingestor = Ingestor(indexer)
 
-    # Registrar nodos en el indexer (necesario para TopologyBuilder)
     for node in nodes:
-        ingestor.load_node({
-            "id": node.id,
-            "lat": node.lat,
-            "lon": node.lon,
-            "supply": node.supply,
-            "demand": node.demand,
-            "processing_cost": node.processing_cost,
-            "metadata": {"station_type": node.station_type},
-        })
+        indexer.register_node(node)
 
     # ==================================================================
     # DISCOVERY ENGINE: Descubrimiento automatico de arcos
@@ -173,7 +149,7 @@ def ejecutar_pipeline() -> None:
 
     if not survivors:
         logger.error("[ERROR CRITICO] 0 arcos descubiertos. No hay topologia viable.")
-        return
+        sys.exit(1)
 
     # ==================================================================
     # Conversion de candidatos a ArcRecord e inyeccion
@@ -194,10 +170,27 @@ def ejecutar_pipeline() -> None:
     topology_package = tb.export_matrices(sparse=False)
 
     node_ids: List[str] = [str(nid) for nid in topology_package["nodes"]]
-    start_node: str = node_ids[0]
-    end_node: str = node_ids[-1]
+    logger.info("   Topologia abstracta generada. Procesando %d nodos y %d arcos.", len(node_ids), indexer.arc_count)
 
-    logger.info("   Topologia lista: %d nodos y %d arcos.", len(node_ids), indexer.arc_count)
+    # INTELLIGENT NODE VALIDATION (Stop at Block 4 requirement)
+    if not source or not target:
+        print("\n" + "*" * 80)
+        print(f" Topologia construida exitosamente con {len(node_ids)} nodos y {indexer.arc_count} arcos.")
+        print(" Nodos disponibles en la red:")
+        for nid in node_ids:
+            print(f"  - {nid}")
+        print("*" * 80)
+        print("\n[!] Topologia cargada y estabilizada.")
+        print("[!] To run the multi-target engine, re-run specifying `--source` and `--target`.")
+        sys.exit(0)
+
+    start_node: str = source
+    end_node: str = target
+
+    if start_node not in node_ids or end_node not in node_ids:
+        logger.error("[ERROR CRITICO] Origen '%s' o Destino '%s' no validos en la topologia.", start_node, end_node)
+        sys.exit(1)
+
     logger.info("   Ruta Objetivo: %s -> %s", start_node, end_node)
 
     # ==================================================================
@@ -218,7 +211,6 @@ def ejecutar_pipeline() -> None:
     logger.info("   [CRITICAL] Peor escenario: ID %s (Retencion: %.1f%%)",
                 worst.get('scenario_id', 'N/A'), worst.get('capacity_retained', 0.0)*100)
 
-    # Guardado de seguridad
     output_dir = os.path.join(base_path, "output")
     os.makedirs(output_dir, exist_ok=True)
     ruta_pkl = os.path.join(output_dir, "scenarios.pkl")
@@ -240,19 +232,25 @@ def ejecutar_pipeline() -> None:
     payloads: Dict[str, Dict[str, Any]] = {}
 
     for s in scenarios:
-        s_id = str(s.scenario_id)
-        retention = float(s.get_capacity_reduction())
+        s_id = str(getattr(s, "scenario_id", s.get("scenario_id") if isinstance(s, dict) else None))
+        
+        if hasattr(s, "get_capacity_reduction"):
+            retention = float(s.get_capacity_reduction())
+        else:
+            retention = float(s.get("capacity_retained", 1.0) if isinstance(s, dict) else 1.0)
+            
         cap_loss = max(0.0, 1.0 - retention)
         node_impacts: Dict[str, float] = {}
-        events = s.events
+        
+        events = getattr(s, "events", s.get("events", []) if isinstance(s, dict) else [])
 
         if events and cap_loss > 0:
             impact_val = cap_loss / max(1, len(events))
             for e in events:
-                code = e.code
-                if "WAREHOUSE" in code:
+                code = getattr(e, "code", e.get("code") if isinstance(e, dict) else None)
+                if code and "WAREHOUSE" in code:
                     node_impacts[start_node] = node_impacts.get(start_node, 0.0) + impact_val
-                elif "CLIENT" in code:
+                elif code and "CLIENT" in code:
                     node_impacts[end_node] = node_impacts.get(end_node, 0.0) + impact_val
                 else:
                     node_impacts[start_node] = node_impacts.get(start_node, 0.0) + impact_val / 2
@@ -273,7 +271,6 @@ def ejecutar_pipeline() -> None:
 
     prime_graph = GraphAssembler.assemble(indexer, node_ids, fragility_map)
 
-    # Construir reliability_report minimo si no existe
     rel_report = getattr(prime_graph, "reliability_report", None)
     if not rel_report:
         edges_report = {}
@@ -283,22 +280,19 @@ def ejecutar_pipeline() -> None:
             edges_report[str(e.edge_id)] = {"prob_failure": prob, "impact_mean": impact}
         rel_report = {"edges": edges_report}
 
-    # Precalculo de pesos por arco
     build_edge_weights(prime_graph.edges, rel_report)
 
-    # Vectores de pesos
     w_survival_vec = np.array([getattr(e, "w_survival", 0.0) for e in prime_graph.edges], dtype=float)
     w_expected_vec = np.array([getattr(e, "w_expected_cost", float(getattr(e, "cost", 0.0))) for e in prime_graph.edges], dtype=float)
 
-    # Motor multiobjetivo
-    cfg_stage5 = Stage5Config(eps_1=0.001, eps_2=500.0)
+    cfg_stage5 = Stage5Config(eps_1= 1, eps_2=0.02)
     try:
         engine_b4 = MultiObjectiveEngine(
             eps_1=cfg_stage5.eps_1,
             eps_2=cfg_stage5.eps_2,
-            max_labels_per_node=getattr(cfg_stage5, "max_labels_per_node", 1000),
-            max_total_labels=getattr(cfg_stage5, "max_total_labels", 100000),
-            max_iterations=getattr(cfg_stage5, "max_iterations", 1000000)
+            max_labels_per_node=getattr(cfg_stage5, "max_labels_per_node", 30),
+            max_total_labels=getattr(cfg_stage5, "max_total_labels", 10000),
+            max_iterations=getattr(cfg_stage5, "max_iterations", 10000)
         )
     except TypeError:
         logger.warning("Fallback: creando MultiObjectiveEngine sin parametros")
@@ -309,7 +303,6 @@ def ejecutar_pipeline() -> None:
     except (NameError, AssertionError):
         raise RuntimeError("build_strategic_options_from_frontier no disponible en bloque4.report")
 
-    # Obtener la frontera de Pareto
     pareto_labels = None
     try:
         pareto_labels = engine_b4.solve(prime_graph, source=start_node, target=end_node)
@@ -333,6 +326,16 @@ def ejecutar_pipeline() -> None:
 
         strategic_options = build_strategic_options_from_frontier(pareto_labels, engine_b4, master_config)
 
+        filtered_options = []
+        for opt in strategic_options:
+            cost = getattr(opt, "total_cost", opt.get("total_cost", 0.0) if isinstance(opt, dict) else 0.0)
+            if all(abs(cost - getattr(acc, "total_cost", acc.get("total_cost", 0.0) if isinstance(acc, dict) else 0.0)) > 1.0 for acc in filtered_options):
+                filtered_options.append(opt)
+                if len(filtered_options) == 3:
+                    break
+
+        strategic_options = filtered_options
+
         reporter = PrimeStrategicReporter(master_config, RenderProfile(use_emojis=True))
         logger.info("\n" + "#" * 65)
         report_text = reporter.generate_full_report(strategic_options)
@@ -344,6 +347,12 @@ def ejecutar_pipeline() -> None:
     else:
         logger.error("[CRITICO] El motor multiobjetivo no encontro rutas entre origen y destino.")
 
-
 if __name__ == "__main__":
-    ejecutar_pipeline()
+    parser = argparse.ArgumentParser(description="Prime Logistics - Agnostic Orchestrator V1.3.5")
+    parser.add_argument("--dataset", required=True, help="Ruta al archivo Excel/Parquet de la red (NODES y FLEET)")
+    parser.add_argument("--source", required=False, help="ID del nodo de origen")
+    parser.add_argument("--target", required=False, help="ID del nodo de destino (objetivo)")
+    
+    args = parser.parse_args()
+    
+    run_pipeline(dataset_path=args.dataset, source=args.source, target=args.target)

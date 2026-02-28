@@ -31,7 +31,8 @@ class SmartLazyIngestor:
         try:
             from osmnx import settings as ox_settings
             ox_settings.timeout = 180  # type: ignore[attr-defined]
-            ox_settings.use_cache = False
+            ox_settings.use_cache = True
+            ox_settings.cache_folder = "./data/osmnx_http_cache"
         except Exception as e:
             logger.warning("No se pudo configurar OSMnx: %s", e)
 
@@ -152,235 +153,170 @@ class SmartLazyIngestor:
         dest: RouteEndpoint,
         mode: str = "truck"
     ) -> nx.MultiDiGraph:
-        """El Flujo Principal: Caché -> Matemáticas -> Descarga -> Fusión -> Guardado."""
+        """El Flujo Principal: Matemáticas -> Descarga OSMnx (con HTTP cache) -> Fusión -> Retorno."""
         self._validate_mode(mode)
         start_total = time.perf_counter()
 
         logger.info("🗺️ Solicitando ruta: %s -> %s (modo: %s)", origin.name, dest.name, mode)
 
-        # 1. Intentar cargar desde caché
-        cached_graph = self.cache.load_graph(
-            origin=origin.name,
-            dest=dest.name,
-            zoom=self.config.resolution,
-            profile=self.config.buffer_rings,
-            mode=mode
-        )
-        if cached_graph is not None:
-            logger.info("✅ Caché HIT: mapa recuperado.")
-            self._emit_metric("cache.hit", labels={"mode": mode})
-            # Registrar tiempo total aunque sea caché
-            elapsed_total = (time.perf_counter() - start_total) * 1000
-            self._emit_metric("ingestor.total.duration_ms", elapsed_total,
-                              labels={"cache": "hit", "mode": mode})
-            return cached_graph
-
-        logger.info("🌐 Caché MISS. Iniciando descarga (Smart Lazy Loading)...")
-        self._emit_metric("cache.miss", labels={"mode": mode})
-
-        # 2. Lock de descarga para evitar duplicados concurrentes
-        key = self.cache._generate_key(origin.name, dest.name, self.config.resolution,
-                                       self.config.buffer_rings, mode)
-        lock_path = self.download_lock_dir / f"{key}.lock"
-        download_lock = FileLock(str(lock_path), timeout=60)  # 1 minuto de espera máxima
-
         try:
-            with download_lock:
-                # Volver a comprobar caché por si otro proceso ya lo guardó mientras esperábamos el lock
-                cached_graph = self.cache.load_graph(
-                    origin=origin.name,
-                    dest=dest.name,
-                    zoom=self.config.resolution,
-                    profile=self.config.buffer_rings,
-                    mode=mode
-                )
-                if cached_graph is not None:
-                    logger.info("✅ Caché HIT (después de adquirir lock): mapa recuperado.")
-                    self._emit_metric("cache.hit", labels={"mode": mode})
-                    elapsed_total = (time.perf_counter() - start_total) * 1000
-                    self._emit_metric("ingestor.total.duration_ms", elapsed_total,
-                                      labels={"cache": "hit", "mode": mode})
-                    return cached_graph
+            # 1. Matemáticas: Calcular Corredor
+            start_math = time.perf_counter()
+            total_cells = 0  # Initialize before use
+            corredor = build_h3_corridor(
+                origin, dest,
+                resolution=self.config.resolution,
+                buffer_rings=self.config.buffer_rings,
+                max_cells=self.config.max_cells
+            )
+            self._emit_metric("h3.corridor.duration_ms",
+                              value=(time.perf_counter() - start_math) * 1000)
 
-                # 3. Matemáticas: Calcular Corredor
-                start_math = time.perf_counter()
-                total_cells = 0  # Initialize before use
-                corredor = build_h3_corridor(
-                    origin, dest,
-                    resolution=self.config.resolution,
-                    buffer_rings=self.config.buffer_rings,
-                    max_cells=self.config.max_cells
-                )
-                self._emit_metric("h3.corridor.duration_ms",
-                                  value=(time.perf_counter() - start_math) * 1000)
+            # Guardamos número de celdas para métricas de error
+            total_cells = len(corredor.buffered_cells)
 
-                # Guardamos número de celdas para métricas de error
-                total_cells = len(corredor.buffered_cells)
+            # Dividir en zonas
+            loc_o, loc_d, trunk = split_cells(
+                corredor.buffered_cells,
+                corredor.origin_cell,
+                corredor.destination_cell,
+                local_rings=self.config.local_rings
+            )
 
-                # Dividir en zonas
-                loc_o, loc_d, trunk = split_cells(
-                    corredor.buffered_cells,
-                    corredor.origin_cell,
-                    corredor.destination_cell,
-                    local_rings=self.config.local_rings
-                )
+            # 2. Geometría: Crear los 3 Polígonos (con métrica de vacío y cantidad de celdas)
+            poly_origen = self._cells_to_polygon(loc_o, segment_name="origen")
+            poly_destino = self._cells_to_polygon(loc_d, segment_name="destino")
+            poly_troncal = self._cells_to_polygon(trunk, segment_name="troncal")
 
-                # 4. Geometría: Crear los 3 Polígonos (con métrica de vacío y cantidad de celdas)
-                poly_origen = self._cells_to_polygon(loc_o, segment_name="origen")
-                poly_destino = self._cells_to_polygon(loc_d, segment_name="destino")
-                poly_troncal = self._cells_to_polygon(trunk, segment_name="troncal")
+            # 3. Descargas OSMnx (usando adaptador compatible, interceptará HTTP cache automáticamente)
+            subgraphs = []
+            # Filtro para autopistas (solo troncales principales)
+            trunk_filter = '["highway"~"motorway|motorway_link|trunk|trunk_link"]'
 
-                # 5. Descargas OSMnx (usando adaptador compatible)
-                subgraphs = []
-                # Filtro para autopistas (solo troncales principales)
-                trunk_filter = '["highway"~"motorway|motorway_link|trunk|trunk_link"]'
-
-                try:
-                    if poly_origen and not poly_origen.is_empty:
-                        logger.info("   📥 Bajando mapa local Origen (%s hexágonos)...", len(loc_o))
-                        g_origen = self._graph_from_polygon_adapter(
-                            poly_origen, network_type="drive", simplify=True
-                        )
-                        if g_origen is not None and g_origen.number_of_nodes() > 0 and g_origen.number_of_edges() > 0:
-                            # Verificación adicional: al menos una arista tiene atributo highway
-                            if any('highway' in data for _, _, data in g_origen.edges(data=True)):
-                                subgraphs.append(g_origen)
-                                self._emit_metric("osm.download.success", labels={
-                                    "segment": "origen", "mode": mode, "cells": str(total_cells)
-                                })
-                            else:
-                                logger.warning("Subgrafo origen sin atributos highway (ruido), se omite.")
-                                self._emit_metric("osm.download.empty", labels={
-                                    "segment": "origen", "mode": mode, "cells": str(total_cells)
-                                })
+            try:
+                if poly_origen and not poly_origen.is_empty:
+                    logger.info("   📥 Bajando mapa local Origen (%s hexágonos)...", len(loc_o))
+                    g_origen = self._graph_from_polygon_adapter(
+                        poly_origen, network_type="drive", simplify=True
+                    )
+                    if g_origen is not None and g_origen.number_of_nodes() > 0 and g_origen.number_of_edges() > 0:
+                        if any('highway' in data for _, _, data in g_origen.edges(data=True)):
+                            subgraphs.append(g_origen)
+                            self._emit_metric("osm.download.success", labels={
+                                "segment": "origen", "mode": mode, "cells": str(total_cells)
+                            })
                         else:
-                            logger.warning("Subgrafo origen vacío o sin aristas, se omite.")
+                            logger.warning("Subgrafo origen sin atributos highway (ruido), se omite.")
                             self._emit_metric("osm.download.empty", labels={
                                 "segment": "origen", "mode": mode, "cells": str(total_cells)
                             })
+                    else:
+                        logger.warning("Subgrafo origen vacío o sin aristas, se omite.")
+                        self._emit_metric("osm.download.empty", labels={
+                            "segment": "origen", "mode": mode, "cells": str(total_cells)
+                        })
 
-                    if poly_destino and not poly_destino.is_empty:
-                        logger.info("   📥 Bajando mapa local Destino (%s hexágonos)...", len(loc_d))
-                        g_destino = self._graph_from_polygon_adapter(
-                            poly_destino, network_type="drive", simplify=True
-                        )
-                        if g_destino is not None and g_destino.number_of_nodes() > 0 and g_destino.number_of_edges() > 0:
-                            if any('highway' in data for _, _, data in g_destino.edges(data=True)):
-                                subgraphs.append(g_destino)
-                                self._emit_metric("osm.download.success", labels={
-                                    "segment": "destino", "mode": mode, "cells": str(total_cells)
-                                })
-                            else:
-                                logger.warning("Subgrafo destino sin atributos highway (ruido), se omite.")
-                                self._emit_metric("osm.download.empty", labels={
-                                    "segment": "destino", "mode": mode, "cells": str(total_cells)
-                                })
+                if poly_destino and not poly_destino.is_empty:
+                    logger.info("   📥 Bajando mapa local Destino (%s hexágonos)...", len(loc_d))
+                    g_destino = self._graph_from_polygon_adapter(
+                        poly_destino, network_type="drive", simplify=True
+                    )
+                    if g_destino is not None and g_destino.number_of_nodes() > 0 and g_destino.number_of_edges() > 0:
+                        if any('highway' in data for _, _, data in g_destino.edges(data=True)):
+                            subgraphs.append(g_destino)
+                            self._emit_metric("osm.download.success", labels={
+                                "segment": "destino", "mode": mode, "cells": str(total_cells)
+                            })
                         else:
-                            logger.warning("Subgrafo destino vacío o sin aristas, se omite.")
+                            logger.warning("Subgrafo destino sin atributos highway (ruido), se omite.")
                             self._emit_metric("osm.download.empty", labels={
                                 "segment": "destino", "mode": mode, "cells": str(total_cells)
                             })
+                    else:
+                        logger.warning("Subgrafo destino vacío o sin aristas, se omite.")
+                        self._emit_metric("osm.download.empty", labels={
+                            "segment": "destino", "mode": mode, "cells": str(total_cells)
+                        })
 
-                    if poly_troncal and not poly_troncal.is_empty:
-                        logger.info("   📥 Bajando Autopistas Troncales (%s hexágonos)...", len(trunk))
-                        try:
-                            g_troncal = self._graph_from_polygon_adapter(
-                                poly_troncal, custom_filter=trunk_filter, simplify=True
-                            )
-                            if g_troncal is not None and g_troncal.number_of_nodes() > 0 and g_troncal.number_of_edges() > 0:
-                                if any('highway' in data for _, _, data in g_troncal.edges(data=True)):
-                                    subgraphs.append(g_troncal)
-                                    self._emit_metric("osm.download.success", labels={
-                                        "segment": "troncal", "mode": mode, "cells": str(total_cells)
-                                    })
-                                else:
-                                    logger.warning("Subgrafo troncal sin atributos highway (ruido), se omite.")
-                                    self._emit_metric("osm.download.empty", labels={
-                                        "segment": "troncal", "mode": mode, "cells": str(total_cells)
-                                    })
+                if poly_troncal and not poly_troncal.is_empty:
+                    logger.info("   📥 Bajando Autopistas Troncales (%s hexágonos)...", len(trunk))
+                    try:
+                        g_troncal = self._graph_from_polygon_adapter(
+                            poly_troncal, custom_filter=trunk_filter, simplify=True
+                        )
+                        if g_troncal is not None and g_troncal.number_of_nodes() > 0 and g_troncal.number_of_edges() > 0:
+                            if any('highway' in data for _, _, data in g_troncal.edges(data=True)):
+                                subgraphs.append(g_troncal)
+                                self._emit_metric("osm.download.success", labels={
+                                    "segment": "troncal", "mode": mode, "cells": str(total_cells)
+                                })
                             else:
-                                logger.warning("Subgrafo troncal vacío o sin aristas, se omite.")
+                                logger.warning("Subgrafo troncal sin atributos highway (ruido), se omite.")
                                 self._emit_metric("osm.download.empty", labels={
                                     "segment": "troncal", "mode": mode, "cells": str(total_cells)
                                 })
-                        except ValueError:
-                            logger.info("   ℹ️ No se encontraron autopistas troncales en esta zona (Ruta corta/urbana).")
+                        else:
+                            logger.warning("Subgrafo troncal vacío o sin aristas, se omite.")
+                            self._emit_metric("osm.download.empty", labels={
+                                "segment": "troncal", "mode": mode, "cells": str(total_cells)
+                            })
+                    except ValueError:
+                        logger.info("   ℹ️ No se encontraron autopistas troncales en esta zona (Ruta corta/urbana).")
 
-                except Exception as e:
-                    logger.exception("💥 Error crítico descargando de OpenStreetMap.")
-                    self._emit_metric("osm.download.error", labels={
-                        "error": type(e).__name__,
-                        "origin": origin.name[:8],
-                        "dest": dest.name[:8],
-                        "mode": mode,
-                        "cells": str(total_cells)
-                    })
-                    raise RuntimeError("Fallo al descargar mapas. Verifica tu conexión o el tamaño de la ruta.") from e
+            except Exception as e:
+                logger.exception("💥 Error crítico descargando de OpenStreetMap.")
+                self._emit_metric("osm.download.error", labels={
+                    "error": type(e).__name__,
+                    "origin": origin.name[:8],
+                    "dest": dest.name[:8],
+                    "mode": mode,
+                    "cells": str(total_cells)
+                })
+                raise RuntimeError("Fallo al descargar mapas. Verifica tu conexión o el tamaño de la ruta.") from e
 
-                if not subgraphs:
-                    raise RuntimeError("No se pudo descargar ningún segmento de mapa.")
+            if not subgraphs:
+                raise RuntimeError("No se pudo descargar ningún segmento de mapa.")
 
-                # 6. Fusión (Armar el Frankenstein)
-                logger.info("   🔗 Fusionando los mapas descargados...")
-                start_fusion = time.perf_counter()
+            # 4. Fusión (Armar el Frankenstein)
+            logger.info("   🔗 Fusionando los mapas descargados...")
+            start_fusion = time.perf_counter()
 
-                # Verificar posibles solapamientos (solo para diagnóstico)
-                all_nodes = set()
-                for g in subgraphs:
-                    new_nodes = set(g.nodes)
-                    overlap = all_nodes & new_nodes
-                    if overlap:
-                        logger.warning("Se detectaron %d nodos compartidos entre segmentos. Puede haber inconsistencias.",
-                                       len(overlap))
-                        self._emit_metric("graph.fusion.overlap_nodes", value=len(overlap),
-                                          labels={"mode": mode, "segments": str(len(subgraphs)),
-                                                  "cells": str(total_cells)})
-                    all_nodes.update(new_nodes)
+            # Verificar posibles solapamientos (solo para diagnóstico)
+            all_nodes = set()
+            for g in subgraphs:
+                new_nodes = set(g.nodes)
+                overlap = all_nodes & new_nodes
+                if overlap:
+                    logger.warning("Se detectaron %d nodos compartidos entre segmentos. Puede haber inconsistencias.",
+                                   len(overlap))
+                    self._emit_metric("graph.fusion.overlap_nodes", value=len(overlap),
+                                      labels={"mode": mode, "segments": str(len(subgraphs)),
+                                              "cells": str(total_cells)})
+                all_nodes.update(new_nodes)
 
-                final_graph = nx.compose_all(subgraphs)
-                # Reemplazo de ox.utils_graph.remove_isolated_nodes por NetworkX puro
-                final_graph.remove_nodes_from(list(nx.isolates(final_graph)))
+            final_graph = nx.compose_all(subgraphs)
+            # Reemplazo de ox.utils_graph.remove_isolated_nodes por NetworkX puro
+            final_graph.remove_nodes_from(list(nx.isolates(final_graph)))
 
-                fusion_duration = (time.perf_counter() - start_fusion) * 1000
-                self._emit_metric("graph.fusion.duration_ms", fusion_duration,
-                                  labels={"mode": mode, "cells": str(total_cells)})
+            fusion_duration = (time.perf_counter() - start_fusion) * 1000
+            self._emit_metric("graph.fusion.duration_ms", fusion_duration,
+                              labels={"mode": mode, "cells": str(total_cells)})
 
-                # Métricas del grafo resultante
-                self._emit_metric("graph.nodes_total", value=final_graph.number_of_nodes(),
-                                  labels={"mode": mode, "cells": str(total_cells)})
-                self._emit_metric("graph.edges_total", value=final_graph.number_of_edges(),
-                                  labels={"mode": mode, "cells": str(total_cells)})
+            # Métricas del grafo resultante
+            self._emit_metric("graph.nodes_total", value=final_graph.number_of_nodes(),
+                              labels={"mode": mode, "cells": str(total_cells)})
+            self._emit_metric("graph.edges_total", value=final_graph.number_of_edges(),
+                              labels={"mode": mode, "cells": str(total_cells)})
 
-                # 7. Guardar en la Caja Fuerte
-                logger.info("   🏦 Guardando mapa en Caché Seguro...")
-                save_ok = self.cache.save_graph(
-                    graph=final_graph,
-                    origin=origin.name,
-                    dest=dest.name,
-                    zoom=self.config.resolution,
-                    profile=self.config.buffer_rings,
-                    mode=mode
-                )
-                if not save_ok:
-                    logger.error("Fallo al guardar el grafo en caché, pero se devuelve el grafo descargado.")
 
-                # Latencia total
-                elapsed_total = (time.perf_counter() - start_total) * 1000
-                self._emit_metric("ingestor.total.duration_ms", elapsed_total,
-                                  labels={"cache": "miss", "mode": mode,
-                                          "segments_downloaded": str(len(subgraphs)),
-                                          "cells": str(total_cells)})
+            # Latencia total
+            elapsed_total = (time.perf_counter() - start_total) * 1000
+            self._emit_metric("ingestor.total.duration_ms", elapsed_total,
+                              labels={"cache": "miss", "mode": mode,
+                                      "segments_downloaded": str(len(subgraphs)),
+                                      "cells": str(total_cells)})
 
-                return final_graph
-
-        except Timeout:
-            logger.error("Timeout esperando lock de descarga para %s -> %s", origin.name, dest.name)
-            self._emit_metric("download.lock.timeout", labels={
-                "origin": origin.name[:8],
-                "dest": dest.name[:8],
-                "mode": mode
-            })
-            raise RuntimeError("Concurrencia de descargas: timeout al adquirir lock. Intenta más tarde.")
+            return final_graph
 
         except Exception as e:
             logger.exception("Error inesperado en get_or_build_graph")
@@ -433,7 +369,7 @@ class SmartLazyIngestor:
             return self._dijkstra_cache[cache_key]
 
         try:
-            # 2. Obtener el grafo (Caché disco o OSMnx downlaod con backoff)
+            # 2. Obtener el grafo (Caché disco o OSMnx download con backoff)
             G = self.get_or_build_graph(origin, dest, mode)
 
             if G.number_of_nodes() == 0:
@@ -441,13 +377,12 @@ class SmartLazyIngestor:
                 self._dijkstra_cache[cache_key] = -1.0
                 return -1.0
 
-            # 3. Encontrar el nodo OSM más cercano al origen y destino real (lat, lon)
-            # osmnx.distance.nearest_nodes busca el nodo de la red más próximo a (lon, lat)
+            # 3. Mapeo Dinámico de Nodos (Resolución Topológica Estricta)
+            # Obligatorio para evitar errores de ID cuando OSMnx simplifica grafos o carga desde el caché
             orig_node = ox.distance.nearest_nodes(G, origin.lon, origin.lat)
             dest_node = ox.distance.nearest_nodes(G, dest.lon, dest.lat)
 
             # 4. Calcular el camino más corto (Dijkstra) usando la longitud física de la calle
-            # 'length' es el atributo estándar de osmnx en metros
             distance_meters = nx.shortest_path_length(G, orig_node, dest_node, weight='length')
             
             distance_km = distance_meters / 1000.0
@@ -459,11 +394,16 @@ class SmartLazyIngestor:
             return distance_km
 
         except nx.NetworkXNoPath:
-            logger.warning("No hay camino físico posible entre %s y %s en el grafo descargado.", 
+            logger.warning("Degradación (No Path): No hay camino físico posible entre %s y %s en el grafo descargado.", 
                            origin.name, dest.name)
             self._dijkstra_cache[cache_key] = -1.0
             return -1.0
+        except nx.NodeNotFound as e:
+            logger.warning("Degradación (NodeNotFound): Falla resolviendo proyección topológica cerca de %s/%s. Detalle: %s", 
+                           origin.name, dest.name, str(e))
+            self._dijkstra_cache[cache_key] = -1.0
+            return -1.0
         except Exception as e:
-            logger.error("Error en Filter 3 (%s -> %s): %s", origin.name, dest.name, str(e))
+            logger.error("Error inesperado en Filter 3 (%s -> %s): %s", origin.name, dest.name, str(e))
             self._dijkstra_cache[cache_key] = -1.0
             return -1.0
