@@ -69,13 +69,39 @@ OUTPUT_DIR = Path("data") / "parquet_db"
 # Helper Functions
 # ====================================================================
 
-def get_priors(highway_val) -> tuple:
-    """Returns the (alpha_prior, beta_prior) tuple depending on OSM highway classification."""
-    hw_str = str(highway_val).lower()
+def calibrar_prior(highway, surface, lanes, maxspeed) -> tuple:
+    # Prior base por highway
+    hw_str = str(highway).lower()
     for kw, prior in PRIOR_MAPPING.items():
         if kw in hw_str:
-            return prior
-    return DEFAULT_PRIOR
+            alpha, beta = prior
+            break
+    else:
+        alpha, beta = DEFAULT_PRIOR
+
+    # Modificador por superficie
+    surface_str = str(surface).lower()
+    if any(s in surface_str for s in ["unpaved", "gravel", "dirt", "ground"]):
+        alpha *= 0.6
+        beta *= 1.4
+
+    # Modificador por carriles
+    try:
+        if int(str(lanes).split("[")[0].strip()) >= 3:
+            alpha *= 1.1
+            beta *= 0.9
+    except (ValueError, TypeError):
+        pass
+
+    # Modificador por velocidad máxima
+    try:
+        if int(str(maxspeed).split()[0]) >= 100:
+            alpha *= 1.05
+            beta *= 0.95
+    except (ValueError, TypeError):
+        pass
+
+    return (round(alpha, 4), round(beta, 4))
 
 # ====================================================================
 # Main ETL Pipeline
@@ -192,8 +218,15 @@ def main():
     logger.info("Inherited 'h3_index_origin' from source nodes to edges.")
     
     # Calculate and Inject Bayesian Priors
-    logger.info("Injecting Bayesian Priors based on 'highway' type...")
-    priors = gdf_edges["highway"].apply(get_priors)
+    logger.info("Injecting Bayesian Priors based on highway, surface, lanes, and maxspeed...")
+    priors = gdf_edges.apply(
+        lambda row: calibrar_prior(
+            row.get("highway", "unknown"),
+            row.get("surface", "unknown"),
+            row.get("lanes", "unknown"),
+            row.get("maxspeed", "unknown")
+        ), axis=1
+    )
     gdf_edges["alpha_prior"] = priors.apply(lambda x: x[0])
     gdf_edges["beta_prior"] = priors.apply(lambda x: x[1])
     
