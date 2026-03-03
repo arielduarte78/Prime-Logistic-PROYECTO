@@ -70,3 +70,6 @@ data/osmnx_http_cache/
 output/*.csv
 output/*.pkl
 output/*.json
+
+#v1.4
+cache/
