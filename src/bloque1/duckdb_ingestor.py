@@ -34,7 +34,7 @@ def extract_subgraph_edges(h3_corridor: list[str]) -> pd.DataFrame:
     
     # Construct exact query
     query = f"""
-        SELECT * 
+        SELECT u, v, length, highway, alpha_prior, beta_prior, h3_index_origin
         FROM read_parquet('{str(EDGES_PARQUET_PATH)}')
         WHERE h3_index_origin IN ({in_clause_values})
     """

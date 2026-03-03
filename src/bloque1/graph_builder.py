@@ -15,6 +15,12 @@ logger = logging.getLogger("Graph_Builder")
 # ====================================================================
 
 @dataclass(frozen=True)
+class NodePayload:
+    osm_id: int
+    lat: float = 0.0
+    lon: float = 0.0
+
+@dataclass(frozen=True)
 class EdgePayload:
     """
     Immutable payload stored in every directed edge of the rustworkx graph.
@@ -30,7 +36,10 @@ class EdgePayload:
 # Graph Instantiation Engine
 # ====================================================================
 
-def build_directed_graph(df_edges: pd.DataFrame) -> Tuple[rx.PyDiGraph, Dict[int, int], Dict[int, int]]:
+def build_directed_graph(
+    df_edges: pd.DataFrame,
+    df_nodes: pd.DataFrame = None
+) -> Tuple[rx.PyDiGraph, Dict[int, int], Dict[int, int]]:
     """
     Constructs a high-performance rustworkx PyDiGraph directly from a duckdb DataFrame.
     Returns:
@@ -56,10 +65,22 @@ def build_directed_graph(df_edges: pd.DataFrame) -> Tuple[rx.PyDiGraph, Dict[int
         # Extract all unique nodes involved in edges in O(1) vectorized operation
         unique_nodes = pd.unique(df_edges[['u', 'v']].values.ravel())
         
+        # Build node coordinate mapping if df_nodes is provided
+        node_coords = {}
+        if df_nodes is not None and not df_nodes.empty:
+            if 'osm_id' in df_nodes.columns and 'lat' in df_nodes.columns and 'lon' in df_nodes.columns:
+                node_coords = df_nodes.set_index('osm_id')[['lat', 'lon']].to_dict('index')
+
         # Populate rustworkx nodes and dictionary mappings
         for osm_id in unique_nodes:
             osm_int = int(osm_id)
-            rx_idx = graph.add_node(osm_int)
+            
+            if osm_int in node_coords:
+                payload = NodePayload(osm_id=osm_int, lat=float(node_coords[osm_int]['lat']), lon=float(node_coords[osm_int]['lon']))
+            else:
+                payload = NodePayload(osm_id=osm_int)
+                
+            rx_idx = graph.add_node(payload)
             osm_to_rx[osm_int] = rx_idx
             rx_to_osm[rx_idx] = osm_int
             
