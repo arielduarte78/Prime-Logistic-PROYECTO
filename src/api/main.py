@@ -18,6 +18,8 @@ from src.bloque4.rx_adapter import build_legacy_graph, get_rx_idx_for_osm
 from src.bloque4.multiobjective_engine import MultiObjectiveEngine
 from src.bloque4.pareto import ParetoFrontResult
 import duckdb
+from src.config.settings import load_cost_settings
+from src.bloque3.threat_loader import load_h3_threat_matrix
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PrimeAPI")
@@ -38,6 +40,10 @@ async def lifespan(app: FastAPI):
         if not path.exists():
             raise RuntimeError(f"Parquet artifact not found: {path}")
     logger.info("All immutable artifacts validated. Engine is ready.")
+    app.state.cost_settings = load_cost_settings()
+    app.state.threat_matrix = load_h3_threat_matrix()
+    logger.info(f"Cost settings loaded: c_km_ars={app.state.cost_settings.c_km_ars}")
+    logger.info(f"Threat matrix loaded: {len(app.state.threat_matrix)} hexagons in red zones.")
     yield
     # Cleanup on shutdown
     logger.info("Engine shutting down.")
@@ -99,15 +105,18 @@ async def calculate_route(payload: RouteRequest, request: Request):
             judge = BayesianJudge(graph)
             
             # 6. Construir grafo legacy para el motor multiobjetivo
-            legacy_graph, config, node_coords = build_legacy_graph(
+            legacy_graph, config, financial_summary = build_legacy_graph(
                 rx_graph=graph,
                 rx_to_osm=rx_to_osm,
                 judge=judge,
                 source_rx_idx=source_rx,
                 target_rx_idx=target_rx
             )
+            logger.info(f"Financial summary: {financial_summary}")
 
             # 7. Motor multiobjetivo A*-guiado
+            # node_coords fue reemplazado en el output, así que lo extraemos on-the-fly para el engine
+            node_coords = {n.node_id: (n.lat, n.lon) for n in legacy_graph.nodes if n.lat != 0.0 or n.lon != 0.0}
             engine = MultiObjectiveEngine(eps_1=0.1, eps_2=50.0, max_total_labels=150000)
             frontier_labels = engine.solve(legacy_graph, str(source_rx), str(target_rx), node_coords=node_coords)
 

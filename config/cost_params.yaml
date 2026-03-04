@@ -1,0 +1,19 @@
+# config/cost_params.yaml
+# Calibrado con datos reales - AMBA (Marzo 2026)
+
+costos:
+  c_km_ars: 1287.67
+  c_hora_ars: 23017.50
+  franquicia_seguro_usd: 100000.0
+  dolar_mep_ars: 1434.11
+  velocidad_comercial_kmh: 20.0
+
+peajes:
+  ausa_25_mayo_ars: 29780.02
+  ausa_paseo_bajo_ars: 10203.02
+  acceso_norte_oeste_ars: 10287.64
+  aubasa_sur_ars: 16200.00
+  promedio_ars: 15500.0
+
+custodia:
+  tarifa_hora_ars: 55000.0
