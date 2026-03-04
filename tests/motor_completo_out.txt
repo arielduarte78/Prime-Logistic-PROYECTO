@@ -1,0 +1,21 @@
+==================================================
+ IGNICIÓN DEL MOTOR PRIME V1.4 (FASES 1 A 4) 
+==================================================
+
+[1/4] Extracción Out-of-Core...
+-> Parquet a RAM: 40.85 ms (10326 aristas)
+
+[2/4] Instanciación Rustworkx...
+-> Grafo C/Rust compilado en: 62.62 ms
+
+[3/4] Puente Matricial NumPy (Bloque 2)...
+-> Tensores C-Contiguous creados en: 7.78 ms
+
+[4/4] Inferencia Bayesiana y Pareto (Bloques 3 y 4)...
+-> Juez y 10326 Aristas Pareto listas en: 24.98 ms
+
+==================================================
+ TIEMPO TOTAL DE PROCESAMIENTO: 136.29 ms
+==================================================
+
+Auditoría Pareto (Arista 0): Edge(u=0, v=1, length=40.5278740260172, w_expected_cost=45.641203926496004, w_survival=2.070139149017523, highway_type='primary')

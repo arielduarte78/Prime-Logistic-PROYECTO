@@ -1,117 +1,66 @@
 #weight_builder.py
-from __future__ import annotations
-
-import math
 import logging
-from typing import Iterable, Mapping, Any
+import math
+from dataclasses import dataclass
+from typing import List, Dict
+import rustworkx as rx
+from src.bloque1.graph_builder import EdgePayload
+from src.bloque3.bayesian_judge import BayesianJudge
 
-from .schema import Edge
+# Logger configuration
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
+logger = logging.getLogger("Weight_Builder")
 
-LOGGER = logging.getLogger(__name__)
-
-# Seguridad numérica: epsilon para evitar log(0) y límites
-_P_EPS = 1e-12
-_P_MAX = 1.0 - 1e-12
-
-
-def _safe_prob(p: float) -> float:
-    """Clamp probability into [0, 1) with tiny epsilon safety for log."""
-    try:
-        pf = float(p if p is not None else 0.0)
-    except Exception:
-        raise ValueError(f"Probability value is not numeric: {p!r}")
-    if pf <= 0.0:
-        return 0.0
-    if pf >= 1.0:
-        return _P_MAX
-    return max(_P_EPS, min(_P_MAX, pf))
-
-
-def build_edge_weights(edges: Iterable[Edge], reliability_report: Mapping[str, Mapping[str, Any]]) -> None:
+@dataclass(frozen=True)
+class Edge:
     """
-    Itera una sola vez sobre 'edges' y actualiza in-place:
-      - edge.w_survival = -ln(1 - P(F))  (clamped con epsilon)
-      - edge.w_expected_cost = cost + P_safe * impact_mean
-
-    Args:
-        edges: iterable de objetos Edge (mutables).
-        reliability_report: dict con la estructura
-            {'edges': {edge_id: {'prob_failure': float, 'impact_mean': float}}, ...}
-
-    Notes:
-        - Si un edge no tiene entrada en el reporte, se deja sin modificar.
-        - Si Edge resulta inmutable, se lanza RuntimeError con mensaje claro.
+    Final Edge artifact expected by the native Pareto engine (Block 4)
     """
-    if not isinstance(reliability_report, Mapping) or "edges" not in reliability_report:
-        raise RuntimeError("Invalid reliability_report: missing 'edges' mapping")
+    u: int
+    v: int
+    length: float
+    w_expected_cost: float
+    w_survival: float
+    highway_type: str
 
-    edges_report = reliability_report["edges"]
-    if not isinstance(edges_report, Mapping):
-        raise RuntimeError("Invalid reliability_report: 'edges' must be a mapping")
-
-    for edge in edges:
-        eid = str(getattr(edge, "edge_id", None))
-        if not eid:
-            LOGGER.debug("Encountered edge without edge_id; skipping.")
+def build_pareto_edges(graph: rx.PyDiGraph, judge: BayesianJudge) -> List[Edge]:
+    """
+    Reads the rustworkx graph populated post-Monte Carlo and creates the
+    final operational schema.Edge objects for the MOEA setting.
+    This preserves the intact mathematical integrity of Block 4.
+    """
+    logger.info("Building final schema.Edge objects for the Pareto Multiobjective Optimizer...")
+    pareto_edges = []
+    
+    # Iterate over the graph exactly once
+    for u_rx, v_rx, payload in graph.weighted_edge_list():
+        if not isinstance(payload, EdgePayload):
             continue
-
-        payload = edges_report.get(eid)
-        if payload is None:
-            LOGGER.debug("No reliability data for edge %s; skipping weight assignment.", eid)
-            continue
-
-        if not isinstance(payload, Mapping):
-            LOGGER.warning("Invalid payload type for edge %s; expected mapping, got %s. Skipping.", eid, type(payload))
-            continue
-
-        # Accept payloads that may use alternative keys
-        prob_key = "prob_failure" if "prob_failure" in payload else ("p_fail" if "p_fail" in payload else None)
-        impact_key = "impact_mean" if "impact_mean" in payload else ("impact" if "impact" in payload else None)
-
-        if prob_key is None or impact_key is None:
-            LOGGER.warning("Edge %s missing 'prob_failure' or 'impact_mean' keys; skipping.", eid)
-            continue
-
-        prob = payload.get(prob_key)
-        impact = payload.get(impact_key)
-
-        # Convertir y validar numéricamente
-        try:
-            prob_f = float(prob if prob is not None else 0.0)
-        except Exception:
-            LOGGER.warning("Edge %s prob_failure is not numeric: %r; skipping.", eid, prob)
-            continue
-        try:
-            impact_f = float(impact if impact is not None else 0.0)
-        except Exception:
-            LOGGER.warning("Edge %s impact_mean is not numeric: %r; skipping.", eid, impact)
-            continue
-
-        # Clamp / seguridad
-        prob_safe = _safe_prob(prob_f)
-
-        # Eje supervivencia: -ln(1 - p) con seguridad numérica
-        w_surv = -math.log(1.0 - prob_safe) if prob_safe > 0.0 else 0.0
-
-        # Eje fricción/operativo: cost + p_safe * impact_mean
-        # Defensive cost extraction
-        try:
-            cost_attr = getattr(edge, "cost", float('inf'))
-            cost_val = float(cost_attr if cost_attr is not None else float('inf'))
-        except Exception:
-            LOGGER.warning("Edge %s has non-numeric cost; defaulting to inf", eid)
-            cost_val = float('inf')
-
-        w_expected = cost_val + prob_safe * float(impact_f if impact_f is not None else 0.0)
-
-        # Asignar in-place; si Edge es inmutable, lanzar RuntimeError con mensaje claro
-        try:
-            setattr(edge, "w_survival", float(w_surv if w_surv is not None else 0.0))
-            setattr(edge, "w_expected_cost", float(w_expected if w_expected is not None else float('inf')))
-            LOGGER.debug(
-                "Assigned weights to edge %s: w_survival=%.6f w_expected_cost=%.6f",
-                eid, w_surv, w_expected
-            )
-        except Exception:
-            LOGGER.exception("Failed to assign weights to edge %s. Edge may be immutable.", eid)
-            raise RuntimeError("Edge objects appear immutable; make Edge mutable or adapt weight_builder to return weights mapping")
+            
+        # Get exact updated prior from Block 3 Bayesian Inference
+        beta_params = judge.get_params(u_rx, v_rx)
+        
+        # Calculate Reliability/Survival based on Beta Posterior Expected Value
+        # E(Beta) = alpha / (alpha + beta)
+        survival_probability = beta_params.alpha / (beta_params.alpha + beta_params.beta)
+        
+        # Transform multiplicative survival probability into an additive logarithmic penalty
+        w_survival = -math.log(max(survival_probability, 1e-9))
+        
+        # We assume Expected Cost as purely geometric for this architecture scope
+        # Incorporating the expected frictional damage in case of failure:
+        p_failure = 1.0 - survival_probability
+        expected_cost = payload.length + (p_failure * payload.length)
+        
+        edge = Edge(
+            u=u_rx,  # Keeping rustworkx internal pointers for speed in Block 4 labels
+            v=v_rx,
+            length=payload.length,
+            w_expected_cost=expected_cost,
+            w_survival=w_survival,
+            highway_type=payload.highway
+        )
+        pareto_edges.append(edge)
+        
+    logger.info(f"Successfully constructed {len(pareto_edges)} objects for Pareto Engine.")
+    return pareto_edges
