@@ -73,3 +73,10 @@ output/*.json
 
 #v1.4
 cache/
+
+# Limpieza V1.4
+*.txt
+!requirements.txt
+__pycache__/
+.pytest_cache/
+*.log

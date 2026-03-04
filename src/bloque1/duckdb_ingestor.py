@@ -15,6 +15,7 @@ logger = logging.getLogger("DuckDB_Ingestor")
 # parent.parent -> src
 # parent.parent.parent -> Prime-Logistic-PROYECTO (Workspace Root)
 EDGES_PARQUET_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "parquet_db" / "edges.parquet"
+NODES_PARQUET_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "parquet_db" / "nodes.parquet"
 
 def extract_subgraph_edges(h3_corridor: list[str]) -> pd.DataFrame:
     """
@@ -49,3 +50,19 @@ def extract_subgraph_edges(h3_corridor: list[str]) -> pd.DataFrame:
     logger.info(f"DuckDB extraction complete in {elapsed_time:.3f} seconds. Extracted {len(df_edges)} edges.")
     
     return df_edges
+
+def get_nearest_node_osm_id(lat: float, lon: float) -> int:
+    # f-string SOLO para la ruta del archivo (estática)
+    # ? para las coordenadas (dinámicas, parametrizadas)
+    query = f"""
+        SELECT osm_id,
+               ((lat - ?) * (lat - ?) + (lon - ?) * (lon - ?)) AS dist_sq
+        FROM read_parquet('{str(NODES_PARQUET_PATH)}')
+        ORDER BY dist_sq ASC
+        LIMIT 1
+    """
+    result = duckdb.execute(query, [lat, lat, lon, lon]).df()
+
+    if result.empty:
+        raise ValueError("No se encontró ningún nodo en nodes.parquet")
+    return int(result.iloc[0]["osm_id"])
