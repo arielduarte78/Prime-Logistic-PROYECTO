@@ -1,44 +1,38 @@
 #H3_router.py
 import h3
+import math
 
-def build_h3_corridor(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float, resolution: int = 8, k_buffer: int = 2) -> list[str]:
-    """
-    Calculates an H3 spatial corridor between an origin and a destination,
-    incorporating a buffer zone to guarantee edge coverage.
-    """
-    # 1. Convert origin and destination coordinates to H3 cells
+def build_h3_corridor(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float, resolution: int = 8) -> list[str]:
+    # 1. Obtener hexágonos de origen y destino
     try:
-        # Standard API for h3-py >= 4.0
         origin_hex = h3.latlng_to_cell(origin_lat, origin_lon, resolution)
         dest_hex = h3.latlng_to_cell(dest_lat, dest_lon, resolution)
     except AttributeError:
-        # Fallback API for h3-py <= 3.7.x
         origin_hex = h3.geo_to_h3(origin_lat, origin_lon, resolution)
         dest_hex = h3.geo_to_h3(dest_lat, dest_lon, resolution)
         
-    # 2. Draw line between hexes
+    # 2. Trazar la línea recta base (corredor estricto)
     if origin_hex == dest_hex:
-        # Edge case: Origin and destination are inside the exact same Hexagon
-        line_hexes = [origin_hex]
+        base_line = [origin_hex]
     else:
         try:
-            # Standard API for h3-py >= 4.0
-            line_hexes = h3.grid_path_cells(origin_hex, dest_hex)
+            base_line = h3.grid_path_cells(origin_hex, dest_hex)
         except AttributeError:
-            # Fallback API for h3-py <= 3.7.x
-            line_hexes = h3.h3_line(origin_hex, dest_hex)
+            base_line = h3.h3_line(origin_hex, dest_hex)
             
-    # 3. Expand each cell to create the corridor buffer (k rings)
-    corridor_cells = set()
-    for hex_cell in line_hexes:
+    # 3. DILATACIÓN GEOMÉTRICA (El parche para cruzar puentes)
+    expanded_corridor = set()
+    
+    dist_grados = math.sqrt((origin_lat - dest_lat)**2 + (origin_lon - dest_lon)**2)
+    buffer_radius = max(1, min(5, int(1 + (dist_grados * 25))))
+    
+    for hex_id in base_line:
         try:
-            # Standard API for h3-py >= 4.0
-            buffer_cells = h3.grid_disk(hex_cell, k_buffer)
+            # grid_disk (o k_ring en versiones viejas de h3) obtiene los vecinos a radio k
+            vecinos = h3.grid_disk(hex_id, buffer_radius)
         except AttributeError:
-            # Fallback API for h3-py <= 3.7.x
-            buffer_cells = h3.k_ring(hex_cell, k_buffer)
+            vecinos = h3.k_ring(hex_id, buffer_radius)
             
-        corridor_cells.update(buffer_cells)
+        expanded_corridor.update(vecinos)
         
-    # Return a unique list of hexagons (as strings)
-    return list(corridor_cells)
+    return list(expanded_corridor)

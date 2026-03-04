@@ -1,11 +1,19 @@
 # src/bloque4/multiobjective_engine.py
+"""
+Dual-pass Dijkstra engine using rustworkx native compiled shortest-path.
+Pass 1: minimize w_survival (safest route = "Tank")
+Pass 2: minimize w_expected_cost (cheapest route = "Gambler")
+The Pareto frontier is constructed from these two extremes plus interpolated solutions.
+"""
 from __future__ import annotations
 
-import heapq
 import logging
 import math
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+
+import rustworkx as rx
 
 from .schema import Graph, Edge, RawSolution
 
@@ -14,25 +22,19 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass(order=False)
 class Label:
-    """Label for multi‑objective label‑setting algorithm."""
+    """Label representing a complete path solution for Pareto extraction."""
     node_id: str
-    w_survival: float          # cumulative survival weight = sum(-ln(1-P(F)))
-    w_expected_cost: float     # cumulative expected cost = sum(cost + P(F)*impact)
+    w_survival: float
+    w_expected_cost: float
     parent_label: Optional["Label"]
     edge_id_from_parent: Optional[str]
-    seq: int = 0               # tie-breaker sequence number, assigned by the engine
-    # Exact accumulators for precise reconstruction
+    seq: int = 0
     cum_cost: float = 0.0
     cum_time: float = 0.0
     cum_risk_weight: float = 0.0
+    f_priority: float = 0.0
 
     def __lt__(self, other: "Label") -> bool:
-        """
-        Lexicographic ordering:
-        1. smaller w_survival (higher survival probability) first,
-        2. then smaller w_expected_cost,
-        3. then sequence number (to avoid ambiguity).
-        """
         if self.w_survival != other.w_survival:
             return self.w_survival < other.w_survival
         if self.w_expected_cost != other.w_expected_cost:
@@ -42,44 +44,45 @@ class Label:
 
 class MultiObjectiveEngine:
     """
-    ε‑approximate label‑setting algorithm for two objectives:
-        - minimize w_survival (→ maximize survival probability)
-        - minimize w_expected_cost
-
-    Dominance is checked via a discrete grid per node:
-        box_1 = floor(w_survival / eps_1)
-        box_2 = floor(w_expected_cost / eps_2)
-
-    Only labels in the same box are compared for ε‑dominance; adjacent boxes are not checked.
-    This yields an ε‑approximate Pareto set.
+    High-performance dual-pass Dijkstra engine using rustworkx's native compiled
+    shortest path algorithm. Finds Pareto-optimal solutions by optimizing each
+    objective independently and then constructing the frontier.
+    
+    This replaces the pure-Python label-setting algorithm which couldn't traverse
+    deep graphs (100+ hops) within practical iteration limits.
     """
 
     def __init__(
         self,
-        eps_1: float = 0.001,
-        eps_2: float = 1.0,
+        eps_1: float = 0.1,
+        eps_2: float = 50.0,
         max_labels_per_node: int = 1000,
-        max_total_labels: int = 100000,
-        max_iterations: int = 10_000_000
+        max_total_labels: int = 150000,
+        max_iterations: int = 10_000_000,
     ) -> None:
-        if eps_1 <= 0.0 or eps_2 <= 0.0:
-            raise ValueError("eps_1 and eps_2 must be positive.")
         self.eps_1 = float(eps_1)
         self.eps_2 = float(eps_2)
-        self.max_labels_per_node = int(max_labels_per_node)
-        self.max_total_labels = int(max_total_labels)
-        self.max_iterations = int(max_iterations)
-        self.last_audit: dict = {}  # to be filled after solve()
+        self.last_audit: dict = {}
 
-    def _box(self, w_surv: float, w_exp: float) -> Tuple[int, int]:
-        """Compute discrete grid box indices using floor division for stability."""
-        return (int(math.floor(w_surv / self.eps_1)), int(math.floor(w_exp / self.eps_2)))
-
-    def solve(self, graph: Graph, source: str, target: str) -> List[Label]:
+    def solve(
+        self,
+        graph: Graph,
+        source: str,
+        target: str,
+        node_coords: Optional[Dict[str, Tuple[float, float]]] = None,
+    ) -> List[Label]:
         """
-        Returns the Pareto‑ε‑approximate frontier at the target node.
-        The returned value is a list of Label objects stored for the target node.
+        Returns Pareto-optimal Labels at the target node using native Dijkstra.
+        
+        Strategy:
+        1. Build a temporary rustworkx DiGraph from the legacy Graph edges
+        2. Run Dijkstra minimizing w_survival → "Tank" route
+        3. Run Dijkstra minimizing w_expected_cost → "Gambler" route
+        4. Run Dijkstra minimizing balanced (w_survival + w_expected_cost) → "Balancer"
+        5. Return all unique solutions as Labels
         """
+        t0 = time.time()
+        
         # Validate terminals
         node_ids = {n.node_id for n in graph.nodes}
         if source not in node_ids:
@@ -87,164 +90,156 @@ class MultiObjectiveEngine:
         if target not in node_ids:
             raise ValueError(f"Target node {target} not found in graph.")
 
-        # Validate that all edges have preprocessed weights
-        for e in graph.edges:
-            ws = getattr(e, "w_survival", None)
-            we = getattr(e, "w_expected_cost", None)
-            if ws is None or we is None:
-                raise ValueError(f"Edge {e.edge_id} missing w_survival or w_expected_cost; run weight_builder first.")
-            if not (isinstance(ws, (int, float)) and isinstance(we, (int, float))):
-                raise ValueError(f"Edge {e.edge_id} has non-numeric weights: w_survival={ws!r}, w_expected_cost={we!r}")
-            if math.isnan(ws) or math.isnan(we) or math.isinf(ws) or math.isinf(we):
-                raise ValueError(f"Edge {e.edge_id} has invalid numeric weights: w_survival={ws}, w_expected_cost={we}")
-            if ws < 0 or we < 0:
-                raise ValueError(f"Edge {e.edge_id} has negative weights: w_survival={ws}, w_expected_cost={we}")
-
-        # Data structures
-        labels_per_node: Dict[str, List[Label]] = {node.node_id: [] for node in graph.nodes}
-        # grid_per_node[node][(box1,box2)] = best label in that box (lowest w_expected_cost)
-        grid_per_node: Dict[str, Dict[Tuple[int, int], Label]] = {node.node_id: {} for node in graph.nodes}
-        # active_labels_per_node counts the number of labels currently stored in the grid (one per box)
-        active_labels_per_node: Dict[str, int] = {node.node_id: 0 for node in graph.nodes}
-        total_labels_generated = 0      # labels that entered the grid (new best in a box)
-        total_labels_pushed = 0        # labels pushed onto the heap (including those later pruned)
-        total_labels_pruned = 0
-
-        # Priority queue (min‑heap) ordered by __lt__
-        heap: List[Label] = []
-
-        # Build quick outgoing edge map for efficiency
-        outgoing: Dict[str, List[Edge]] = {}
+        # Build temporary rustworkx graph with string node IDs mapped to integers
+        rx_graph = rx.PyDiGraph()
+        str_to_rx: Dict[str, int] = {}
+        
+        for node in graph.nodes:
+            idx = rx_graph.add_node(node.node_id)
+            str_to_rx[node.node_id] = idx
+        
+        # Store edge data for path reconstruction
+        edge_data: Dict[Tuple[int, int, int], Edge] = {}  # (u_rx, v_rx, edge_idx) -> Edge
+        
         for edge in graph.edges:
-            outgoing.setdefault(edge.source, []).append(edge)
-
-        # Initial label at source
-        seq = 0
-        start_label = Label(
-            node_id=source,
-            w_survival=0.0,
-            w_expected_cost=0.0,
-            parent_label=None,
-            edge_id_from_parent=None,
-            seq=seq,
-        )
-        heapq.heappush(heap, start_label)
-        total_labels_pushed += 1
-        # register start label in grid and labels_per_node
-        start_box = self._box(0.0, 0.0)
-        grid_per_node[source][start_box] = start_label
-        labels_per_node[source].append(start_label)
-        active_labels_per_node[source] += 1
-        total_labels_generated += 1
-
-        iterations = 0
-        while heap:
-            iterations += 1
-            if iterations > self.max_iterations or total_labels_generated > self.max_total_labels:
-                # Safety truncation
-                LOGGER.warning(
-                    "MOEngine safety limit reached: iterations=%d, generated=%d",
-                    iterations, total_labels_generated
-                )
-                break
-
-            label = heapq.heappop(heap)
-
-            # 1. Grid‑based dominance check
-            box = self._box(label.w_survival, label.w_expected_cost)
-            best_in_box = grid_per_node[label.node_id].get(box)
-            if best_in_box is not None and best_in_box is not label and best_in_box.w_expected_cost <= label.w_expected_cost - self.eps_2:
-                LOGGER.debug(
-                    "Pruned by grid (same box): label %s (w_surv=%.4f, w_exp=%.4f) vs best (w_exp=%.4f)",
-                    label.seq, label.w_survival, label.w_expected_cost, best_in_box.w_expected_cost
-                )
-                total_labels_pruned += 1
+            if edge.source not in str_to_rx or edge.target not in str_to_rx:
                 continue
+            u_rx = str_to_rx[edge.source]
+            v_rx = str_to_rx[edge.target]
+            edge_idx = rx_graph.add_edge(u_rx, v_rx, edge)
+            edge_data[(u_rx, v_rx, edge_idx)] = edge
 
-            # 2. Store/update the label in the node's structures
-            existing = grid_per_node[label.node_id].get(box)
-            if existing is None or label.w_expected_cost < existing.w_expected_cost:
-                if existing is not None:
-                    LOGGER.debug("Replacing label %s in box %s with label %s (better w_exp)", existing.seq, box, label.seq)
-                    active_labels_per_node[label.node_id] -= 1
-                grid_per_node[label.node_id][box] = label
-                labels_per_node[label.node_id].append(label)
-                if len(labels_per_node[label.node_id]) > 10 * self.max_labels_per_node:
-                    labels_per_node[label.node_id] = labels_per_node[label.node_id][-self.max_labels_per_node:]
-                active_labels_per_node[label.node_id] += 1
-                total_labels_generated += 1
+        src_rx = str_to_rx.get(source)
+        tgt_rx = str_to_rx.get(target)
+        
+        if src_rx is None or tgt_rx is None:
+            LOGGER.error("Source or target not mapped to rustworkx indices")
+            return []
 
-            # 3. Expansion
-            for edge in outgoing.get(label.node_id, []):
-                if edge.target is None:
-                    continue
+        LOGGER.info("Built temporary rx graph: %d nodes, %d edges", rx_graph.num_nodes(), rx_graph.num_edges())
+
+        labels: List[Label] = []
+        seq = 0
+        
+        # Build adjacency for edge lookup
+        edge_by_source: Dict[str, List[Edge]] = {}
+        for e in graph.edges:
+            edge_by_source.setdefault(e.source, []).append(e)
+
+        def _build_label_from_path(node_path: List[int], label_seq: int) -> Optional[Label]:
+            """Reconstruct a Label chain from a rustworkx node path."""
+            if not node_path:
+                return None
+            
+            nonlocal seq
+            
+            # Convert rx indices back to string node IDs
+            str_path = [rx_graph[idx] for idx in node_path]
+            
+            # Build the label chain
+            current_label = Label(
+                node_id=str_path[0],
+                w_survival=0.0,
+                w_expected_cost=0.0,
+                parent_label=None,
+                edge_id_from_parent=None,
+                seq=label_seq,
+            )
+            
+            for i in range(len(str_path) - 1):
+                src_id = str_path[i]
+                tgt_id = str_path[i + 1]
+                
+                # Find the edge between these nodes
+                best_edge = None
+                for e in edge_by_source.get(src_id, []):
+                    if e.target == tgt_id:
+                        if best_edge is None or e.w_expected_cost < best_edge.w_expected_cost:
+                            best_edge = e
+                
+                if best_edge is None:
+                    LOGGER.warning("No edge found between %s and %s in path reconstruction", src_id, tgt_id)
+                    return None
+                
                 seq += 1
                 new_label = Label(
-                    node_id=edge.target,
-                    w_survival=label.w_survival + edge.w_survival,
-                    w_expected_cost=label.w_expected_cost + edge.w_expected_cost,
-                    parent_label=label,
-                    edge_id_from_parent=edge.edge_id,
+                    node_id=tgt_id,
+                    w_survival=current_label.w_survival + best_edge.w_survival,
+                    w_expected_cost=current_label.w_expected_cost + best_edge.w_expected_cost,
+                    parent_label=current_label,
+                    edge_id_from_parent=best_edge.edge_id,
                     seq=seq,
                 )
-                # propagate exact accumulators
-                _cost = getattr(edge, "cost", 0.0) or 0.0
-                _time = getattr(edge, "time", 0.0) or 0.0
-                _risk_w = getattr(edge, "risk_weight", 0.0) or 0.0
+                new_label.cum_cost = current_label.cum_cost + float(best_edge.cost or 0.0)
+                new_label.cum_time = current_label.cum_time + float(getattr(best_edge, 'time', 0.0) or 0.0)
+                new_label.cum_risk_weight = current_label.cum_risk_weight + float(getattr(best_edge, 'risk_weight', 0.0) or 0.0)
+                current_label = new_label
+            
+            return current_label
 
-                new_label.cum_cost = label.cum_cost + float(_cost)
-                new_label.cum_time = label.cum_time + float(_time)
-                new_label.cum_risk_weight = label.cum_risk_weight + float(_risk_w)
-
-                # Quick prune using the grid of the target node
-                target_box = self._box(new_label.w_survival, new_label.w_expected_cost)
-                best_in_target = grid_per_node[edge.target].get(target_box)
-                if best_in_target is not None and best_in_target.w_expected_cost <= new_label.w_expected_cost - self.eps_2:
-                    LOGGER.debug(
-                        "Pruned new label to %s (box %s) by target grid: best w_exp=%.4f, new w_exp=%.4f",
-                        edge.target, target_box, best_in_target.w_expected_cost, new_label.w_expected_cost
-                    )
-                    total_labels_pruned += 1
+        # ===== MUESTREO DE PARETO POR ESCALARIZACIÓN (10 pases) =====
+        seen_routes: set = set()   # frozenset(edge_ids) para deduplicación
+        n_passes = 10
+        
+        for i in range(n_passes):
+            lmbda = i / (n_passes - 1)   # 0.0, 0.111, ..., 1.0
+            
+            try:
+                paths = rx.dijkstra_shortest_paths(
+                    rx_graph, src_rx, tgt_rx,
+                    weight_fn=lambda e, _l=lmbda: _l * e.w_survival + (1 - _l) * (e.w_expected_cost / 1000.0)
+                )
+                
+                if tgt_rx not in paths:
                     continue
-
-                # safety: avoid exploding labels per node
-                if active_labels_per_node[edge.target] >= self.max_labels_per_node:
-                    LOGGER.debug("Pruned new label to %s due to active label limit (%d)", edge.target, self.max_labels_per_node)
-                    total_labels_pruned += 1
+                
+                seq += 1
+                label = _build_label_from_path(paths[tgt_rx], seq)
+                if label is None:
                     continue
+                
+                # Deduplicación por composición exacta de aristas
+                route_edges = []
+                cursor = label
+                while cursor is not None:
+                    if cursor.edge_id_from_parent is not None:
+                        route_edges.append(cursor.edge_id_from_parent)
+                    cursor = cursor.parent_label
+                route_key = frozenset(route_edges)
+                
+                if route_key in seen_routes:
+                    continue
+                seen_routes.add(route_key)
+                
+                labels.append(label)
+                LOGGER.info(
+                    "PASS %d (λ=%.2f): w_surv=%.4f, w_cost=%.2f, hops=%d",
+                    i + 1, lmbda, label.w_survival, label.w_expected_cost, len(paths[tgt_rx])
+                )
+            except Exception as e:
+                LOGGER.exception("Dijkstra pass %d (λ=%.2f) failed: %s", i + 1, lmbda, e)
 
-                heapq.heappush(heap, new_label)
-                total_labels_pushed += 1
-                LOGGER.debug("Pushed label %s to heap for node %s (box %s)", seq, edge.target, target_box)
+        elapsed_ms = (time.time() - t0) * 1000
 
-        # Logging summary for audit
         LOGGER.info(
-            "MOEngine summary src=%s tgt=%s eps1=%s eps2=%s generated=%d pushed=%d pruned=%d iterations=%d",
-            source, target, self.eps_1, self.eps_2, total_labels_generated, total_labels_pushed, total_labels_pruned, iterations
+            "MOEngine λ-scalarization summary: src=%s tgt=%s passes=%d unique_routes=%d elapsed=%.1fms",
+            source, target, n_passes, len(labels), elapsed_ms
         )
 
-        # Expose audit for caller to persist
         self.last_audit = {
             "source": source,
             "target": target,
             "eps_1": self.eps_1,
             "eps_2": self.eps_2,
-            "generated": int(total_labels_generated),
-            "pushed": int(total_labels_pushed),
-            "pruned": int(total_labels_pruned),
-            "iterations": int(iterations),
-            "max_labels_per_node": int(self.max_labels_per_node),
-            "timestamp": __import__("time").time(),
+            "solutions": len(labels),
+            "elapsed_ms": elapsed_ms,
+            "timestamp": time.time(),
         }
 
-        # Return the frontier at the target
-        return labels_per_node.get(target, [])
+        return labels
 
     def reconstruct_path(self, label: Label) -> RawSolution:
-        """
-        Reconstructs an exact RawSolution from a final label using the stored accumulators.
-        Note: `optimized_cost` is returned as the label.w_expected_cost (expected-cost axis).
-        """
+        """Reconstructs an exact RawSolution from a final label."""
         edges: List[str] = []
         nodes: List[str] = []
         current = label
@@ -261,5 +256,5 @@ class MultiObjectiveEngine:
             total_cost=label.cum_cost,
             optimized_cost=label.w_expected_cost,
             total_time=label.cum_time,
-            total_risk=label.cum_risk_weight
+            total_risk=label.cum_risk_weight,
         )
