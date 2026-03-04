@@ -1,0 +1,45 @@
+{
+    "version": "2026-03",
+    "zones": [
+        {
+            "name": "Central Market / Riccheri Node",
+            "severity": 9,
+            "bbox": {
+                "min_lat": -34.725000,
+                "max_lat": -34.695000,
+                "min_lon": -58.495000,
+                "max_lon": -58.455000
+            }
+        },
+        {
+            "name": "South Bank / La Noria Bridge Node",
+            "severity": 8,
+            "bbox": {
+                "min_lat": -34.715000,
+                "max_lat": -34.685000,
+                "min_lon": -58.475000,
+                "max_lon": -58.445000
+            }
+        },
+        {
+            "name": "RP4 Ring Road Corridor",
+            "severity": 7,
+            "bbox": {
+                "min_lat": -34.765000,
+                "max_lat": -34.735000,
+                "min_lon": -58.475000,
+                "max_lon": -58.435000
+            }
+        },
+        {
+            "name": "West Access / RP23 Moreno Intersection",
+            "severity": 9,
+            "bbox": {
+                "min_lat": -34.645000,
+                "max_lat": -34.615000,
+                "min_lon": -58.815000,
+                "max_lon": -58.775000
+            }
+        }
+    ]
+}
