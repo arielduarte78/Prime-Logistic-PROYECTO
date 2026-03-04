@@ -80,3 +80,13 @@ cache/
 
 # Extracciones y volcados locales
 src/bloque4_contents.txt
+
+#v1.4
+cache/
+
+# Limpieza V1.4
+*.txt
+!requirements.txt
+__pycache__/
+.pytest_cache/
+*.log
