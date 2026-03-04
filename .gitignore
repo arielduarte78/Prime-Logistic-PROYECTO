@@ -70,3 +70,13 @@ data/osmnx_http_cache/
 output/*.csv
 output/*.pkl
 output/*.json
+
+# Auditoría y procesos en segundo plano
+audit_srv_err.txt
+audit_srv_out.txt
+
+# Directorios de caché
+cache/
+
+# Extracciones y volcados locales
+src/bloque4_contents.txt
