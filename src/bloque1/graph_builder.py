@@ -1,8 +1,8 @@
+#src/bloque1/graph_builder.py
 import time
 import logging
 from dataclasses import dataclass
 from typing import Dict, Tuple
-
 import pandas as pd
 import rustworkx as rx
 
@@ -31,6 +31,8 @@ class EdgePayload:
     beta_prior: float
     length: float = 0.0
     highway: str = "unclassified"
+    h3_index: str = ""
+    name: str = ""
 
 # ====================================================================
 # Graph Instantiation Engine
@@ -121,7 +123,9 @@ def build_directed_graph(
                 alpha_prior=alpha,
                 beta_prior=beta,
                 length=length_val,
-                highway=highway_val
+                highway=highway_val,
+                h3_index=str(row.h3_index_origin) if "h3_index_origin" in df_edges.columns else "",
+                name=str(row.name) if "name" in df_edges.columns and pd.notna(row.name) else ""
             )
             
             # Inject into the C/Rust engine
