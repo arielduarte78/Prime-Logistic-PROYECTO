@@ -1,7 +1,9 @@
 #bayesian_judge.py
 import logging
 from dataclasses import dataclass
+import numpy as np
 import rustworkx as rx
+from collections import namedtuple
 from src.bloque1.graph_builder import EdgePayload
 from src.bloque3.threat_loader import load_h3_threat_matrix
 
@@ -9,15 +11,7 @@ from src.bloque3.threat_loader import load_h3_threat_matrix
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 logger = logging.getLogger("Bayesian_Judge")
 
-@dataclass
-class BetaParams:
-    """Mutable parameters for the Beta distribution updated during inference."""
-    alpha: float
-    beta: float
-
-    def update(self, successes: float, failures: float):
-        self.alpha += successes
-        self.beta += failures
+FastBeta = namedtuple('FastBeta', ['alpha', 'beta'])
 
 class BayesianJudge:
     def __init__(self, graph: rx.PyDiGraph):
@@ -26,18 +20,31 @@ class BayesianJudge:
         the rustworkx Directed Graph.
         """
         self.graph = graph
-        self._arc_params = {}
+        self._arc_index = {}
+        self._alphas = None
+        self._betas = None
         self._threat_matrix = load_h3_threat_matrix()
         self._initialize_priors()
 
     def _initialize_priors(self):
         """
         Extracts alpha_prior and beta_prior from every edge's EdgePayload
-        and initializes the mutable _arc_params dictionary for Bayesian updates.
+        and initializes internal numpy arrays for Bayesian updates.
         """
-        logger.info("Initializing Bayesian Priors from rustworkx EdgePayloads...")
+        logger.info("Initializing Bayesian Priors from rustworkx EdgePayloads (NumPy Optimized)...")
         
-        # Iterating over explicitly weighted edges in rustworkx
+        # Pass 1: Count valid edges
+        valid_edges_count = 0
+        for _, _, payload in self.graph.weighted_edge_list():
+            if isinstance(payload, EdgePayload):
+                valid_edges_count += 1
+                
+        # Allocate contiguous arrays strictly in float32
+        self._alphas = np.zeros(valid_edges_count, dtype=np.float32)
+        self._betas = np.zeros(valid_edges_count, dtype=np.float32)
+        
+        # Pass 2: Fill allocated structures
+        idx = 0
         for u_rx, v_rx, payload in self.graph.weighted_edge_list():
             if not isinstance(payload, EdgePayload):
                 continue
@@ -51,19 +58,24 @@ class BayesianJudge:
                 beta = beta * (1.0 + mu * 0.5)
                 logger.debug(f"Edge {u_rx}->{v_rx} degraded by red zone mu={mu:.2f}")
 
-            # The prior is not uniform anymore; it's informed by the ETL Phase 1 and Threat Matrix
-            self._arc_params[(u_rx, v_rx)] = BetaParams(
-                alpha=max(alpha, 1.0),
-                beta=max(beta, 1.0)
-            )
+            self._arc_index[(u_rx, v_rx)] = idx
+            self._alphas[idx] = max(alpha, 1.0)
+            self._betas[idx] = max(beta, 1.0)
             
-        logger.info(f"Successfully initialized priors for {len(self._arc_params)} operational edges.")
+            idx += 1
+            
+        logger.info(f"Successfully initialized contiguous NumPy priors for {len(self._arc_index)} operational edges.")
 
-    def get_params(self, u: int, v: int) -> BetaParams:
-        """Returns the current BetaParams for an edge."""
-        return self._arc_params.get((u, v), BetaParams(1.0, 1.0))
+    def get_params(self, u: int, v: int) -> FastBeta:
+        """Returns the current FastBeta for an edge."""
+        idx = self._arc_index.get((u, v))
+        if idx is not None:
+            return FastBeta(alpha=self._alphas[idx], beta=self._betas[idx])
+        return FastBeta(1.0, 1.0)
         
     def update_edge(self, u: int, v: int, successes: float, failures: float):
-        """Updates the posterior Beta distribution parameters for an edge."""
-        if (u, v) in self._arc_params:
-            self._arc_params[(u, v)].update(successes, failures)
+        """Updates the posterior Beta distribution parameters for an edge directly in the NumPy array."""
+        idx = self._arc_index.get((u, v))
+        if idx is not None:
+            self._alphas[idx] += np.float32(successes)
+            self._betas[idx] += np.float32(failures)

@@ -20,7 +20,7 @@ class NodePayload:
     lat: float = 0.0
     lon: float = 0.0
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EdgePayload:
     """
     Immutable payload stored in every directed edge of the rustworkx graph.
@@ -110,7 +110,9 @@ def build_directed_graph(
             
             # Extract optional values
             length_val = float(row.length) if has_length else 0.0 # type: ignore
-            highway_val = str(row.highway) if "highway" in df_edges.columns else "unclassified" # type: ignore
+            highway_str = str(row.highway) if "highway" in df_edges.columns else "unclassified" # type: ignore
+            HIGHWAY_PEAJE = {"motorway", "motorway_link", "trunk", "trunk_link"}
+            name_str = (str(row.name) if "name" in df_edges.columns and pd.notna(row.name) else "") if highway_str in HIGHWAY_PEAJE else ""
             
             # Translate OSM identifiers to Rustworkx array indices
             u_rx = osm_to_rx[u_osm]
@@ -123,9 +125,9 @@ def build_directed_graph(
                 alpha_prior=alpha,
                 beta_prior=beta,
                 length=length_val,
-                highway=highway_val,
+                highway=highway_str,
                 h3_index=str(row.h3_index_origin) if "h3_index_origin" in df_edges.columns else "",
-                name=str(row.name) if "name" in df_edges.columns and pd.notna(row.name) else ""
+                name=name_str
             )
             
             # Inject into the C/Rust engine
