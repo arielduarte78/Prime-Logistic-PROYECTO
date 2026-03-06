@@ -7,7 +7,8 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 
-from src.api.schemas import RouteRequest, RouteResponse, ParetoResult
+from src.api.schemas import RouteRequest, RouteResponse, ParetoResult, FleetRequest, FleetResponse
+from src.block5.vrp_orchestrator import calculate_fleet
 from src.bloque1.h3_router import build_h3_corridor
 from src.bloque1.duckdb_ingestor import extract_subgraph_edges, get_nearest_node_osm_id
 from src.bloque1.graph_builder import build_directed_graph
@@ -34,6 +35,7 @@ PRIORS_PATH = DATA_DIR / "priors_historicos.parquet"
 async def lifespan(app: FastAPI):
     # 1. Instanciar el semáforo DENTRO del loop de eventos activo
     app.state.semaphore = asyncio.Semaphore(3)
+    app.state.fleet_semaphore = asyncio.Semaphore(1)
     
     import time
     t0 = time.time()
@@ -78,6 +80,10 @@ async def lifespan(app: FastAPI):
     logger.info("Engine shutting down.")
 
 app = FastAPI(lifespan=lifespan, title="Prime Logistics Engine V1.4")
+
+@app.post('/fleet', response_model=FleetResponse)
+async def fleet_endpoint(payload: FleetRequest, request: Request):
+    return await calculate_fleet(payload, request)
 
 @app.post('/route', response_model=RouteResponse)
 async def calculate_route(payload: RouteRequest, request: Request):
