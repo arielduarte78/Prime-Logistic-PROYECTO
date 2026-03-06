@@ -1,6 +1,6 @@
 #schemas.py
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 class EconomicProfile(BaseModel):
     c_km_ars: Optional[float] = None
@@ -44,3 +44,17 @@ class RouteResponse(BaseModel):
     processing_time_ms: float
     total_edges: int
     pareto_solutions: List[ParetoResult]
+
+class FleetRequest(BaseModel):
+    vehicles: List[VehicleInput]
+    destinations: List[DestinationInput]
+    allowed_archetypes: List[str] = ["tanque", "apostador", "equilibrista"]
+    time_limit_seconds: int = 10
+    economic_profile: Optional[EconomicProfile] = None
+
+class FleetResponse(BaseModel):
+    subgraph_edges: int
+    total_time_ms: float
+    phase4_total_legs: int
+    plans: Dict[str, Any]
+
