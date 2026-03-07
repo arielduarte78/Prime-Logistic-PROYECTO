@@ -5,7 +5,11 @@ import asyncio
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
+from dotenv import load_dotenv
+
+# Cargar variables de entorno al inicio
+load_dotenv()
 
 from src.api.schemas import RouteRequest, RouteResponse, ParetoResult, FleetRequest, FleetResponse
 from src.block5.vrp_orchestrator import calculate_fleet
@@ -21,6 +25,7 @@ from src.bloque4.pareto import ParetoFrontResult
 import duckdb
 from src.config.settings import load_cost_settings
 from src.bloque3.threat_loader import load_h3_threat_matrix
+from src.api.security import rate_limit_route, rate_limit_fleet
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PrimeAPI")
@@ -81,11 +86,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan, title="Prime Logistics Engine V1.4")
 
-@app.post('/fleet', response_model=FleetResponse)
+@app.post('/fleet', response_model=FleetResponse, dependencies=[Depends(rate_limit_fleet)])
 async def fleet_endpoint(payload: FleetRequest, request: Request):
     return await calculate_fleet(payload, request)
 
-@app.post('/route', response_model=RouteResponse)
+@app.post('/route', response_model=RouteResponse, dependencies=[Depends(rate_limit_route)])
 async def calculate_route(payload: RouteRequest, request: Request):
     # Obtener el semáforo vivo del estado de la aplicación
     semaphore = request.app.state.semaphore

@@ -90,3 +90,8 @@ cache/
 __pycache__/
 .pytest_cache/
 *.log
+
+*_backup.parquet
+# Bases de datos Parquet generadas
+data/parquet_db/edges.parquet
+data/parquet_db/nodes.parquet
