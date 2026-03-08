@@ -3,7 +3,7 @@ import logging
 import math
 import time
 from types import MappingProxyType
-from typing import Dict, Tuple, Optional
+from typing import Any, Dict, Tuple, Optional
 
 import rustworkx as rx
 
@@ -17,8 +17,8 @@ from src.bloque4.lazy_graph import LazyEdgeView
 
 THREAT_MATRIX = load_h3_threat_matrix()
 
-# Parámetro del modelo matemático: longitud típica de ruta urbana AMBA (km)
-# Usado para normalizar la exposición patrimonial por arista.
+# Parametro del modelo matematico: longitud tipica de ruta urbana AMBA (km)
+# Usado para normalizar la exposicion patrimonial por arista.
 RUTA_TIPICA_KM = 10.0
 
 logger = logging.getLogger("RX_Adapter")
@@ -30,7 +30,9 @@ def build_legacy_graph(
     source_rx_idx: int,
     target_rx_idx: int,
     cost_env: Any,
-    allowed_nodes: set[int]
+    allowed_nodes: set[int],
+    departure_hour: int = 12,
+    speed_profiles: dict = None
 ) -> Tuple[Any, OptimizerConfig, Dict[str, float]]:
     
     start_time = time.time()
@@ -42,7 +44,9 @@ def build_legacy_graph(
         cost_env=cost_env,
         threat_matrix=THREAT_MATRIX,
         ruta_tipica_km=RUTA_TIPICA_KM,
-        judge=judge
+        judge=judge,
+        departure_hour=departure_hour,
+        speed_profiles=speed_profiles if speed_profiles is not None else {}
     )
     
     config = OptimizerConfig(

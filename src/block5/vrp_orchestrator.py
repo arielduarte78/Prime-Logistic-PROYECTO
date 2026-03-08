@@ -1,6 +1,8 @@
 # src/block5/vrp_orchestrator.py
 import time
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Dict, List, Any
 from fastapi import HTTPException
 import math
@@ -26,6 +28,21 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
         base_graph = request.app.state.base_graph
         osm_to_rx = request.app.state.osm_to_rx
         rx_to_osm = request.app.state.rx_to_osm
+        
+        # Resolver departure_hour para trafico dinamico
+        if payload.departure_time:
+            try:
+                departure_hour = datetime.fromisoformat(payload.departure_time).hour
+            except (ValueError, TypeError):
+                try:
+                    departure_hour = datetime.strptime(payload.departure_time, "%H:%M").hour
+                except (ValueError, TypeError):
+                    departure_hour = datetime.now(tz=ZoneInfo("America/Argentina/Buenos_Aires")).hour
+        else:
+            departure_hour = datetime.now(tz=ZoneInfo("America/Argentina/Buenos_Aires")).hour
+        
+        speed_profiles = request.app.state.speed_profiles
+        logger.info(f"VRP departure_hour resolved to {departure_hour}")
         
         # --- PHASE 1 ---
         # "Filter app.state.base_graph by bounding box using the NodePayload (lat/lon) already in memory."
@@ -116,7 +133,9 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
             cost_matrix = build_dense_cost_matrix(
                 base_graph, nodes_of_interest, archetype,
                 client_cost_env, request.app.state.threat_matrix,
-                request.app.state.judge, osm_to_rx
+                request.app.state.judge, osm_to_rx,
+                departure_hour=departure_hour,
+                speed_profiles=speed_profiles
             )
             p2_time = time.time() - t0_p2
             logger.info(f"Phase 2 complete for {archetype} in {p2_time*1000:.1f}ms")
@@ -187,7 +206,9 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
                         source_rx_idx=s_rx,
                         target_rx_idx=t_rx,
                         cost_env=client_cost_env,
-                        allowed_nodes=allowed_nodes
+                        allowed_nodes=allowed_nodes,
+                        departure_hour=departure_hour,
+                        speed_profiles=speed_profiles
                     )
                     
                     node_coords = {n.node_id: (n.lat, n.lon) for n in legacy_graph.nodes if n.lat != 0.0 or n.lon != 0.0}
@@ -204,9 +225,20 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
                         }
                         
                         leg_sols = []
+                        soluciones_validas = [s for s in archetipos.values() if s is not None]
+                        if soluciones_validas:
+                            w_min = min(s.w_survival for s in soluciones_validas)
+                            w_max = max(s.w_survival for s in soluciones_validas)
+                            def normalize_confidence(w_survival):
+                                if w_max == w_min:
+                                    return 100.0
+                                return round(100.0 * (w_max - w_survival) / (w_max - w_min), 1)
+                        else:
+                            normalize_confidence = lambda x: 0.0
+
                         for arch_name, sol in archetipos.items():
                             if sol:
-                                conf = math.exp(-sol.w_survival)
+                                conf = normalize_confidence(sol.w_survival)
                                 leg_sols.append(ParetoResult(
                                     archetype=arch_name,
                                     w_survival=sol.w_survival,

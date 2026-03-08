@@ -1,0 +1,128 @@
+# config/speed_profiles.yaml
+# V1.4.10 — Trafico Dinamico Determinista
+# Multiplicadores de velocidad por franja horaria y macro-zona H3 (resolucion 4).
+# effective_velocity = velocidad_comercial_kmh * multiplier
+# Valor 1.0 = flujo libre.  Valor 0.25 = 75% de congestion.
+
+franjas:
+  pico_manana:
+    horas: [7, 8]           # 07:00-08:59
+    zonas:
+      "841e99dffffffff":     # Norte — Panamericana, Tigre, San Isidro
+        motorway: 0.25
+        motorway_link: 0.25
+        trunk: 0.30
+        trunk_link: 0.30
+        primary: 0.50
+        secondary: 0.60
+        residential: 0.85
+        default: 0.55
+      "841e9b5ffffffff":     # Oeste — Acceso Oeste, Moron, Merlo
+        motorway: 0.30
+        motorway_link: 0.30
+        trunk: 0.35
+        trunk_link: 0.35
+        primary: 0.50
+        secondary: 0.60
+        residential: 0.85
+        default: 0.55
+      "841e991ffffffff":     # CABA Centro — Gral. Paz, 25 de Mayo
+        motorway: 0.35
+        motorway_link: 0.35
+        trunk: 0.35
+        trunk_link: 0.35
+        primary: 0.45
+        secondary: 0.55
+        residential: 0.85
+        default: 0.50
+      "841e999ffffffff":     # Sur — Riccheri, Lanus, Avellaneda
+        motorway: 0.40
+        motorway_link: 0.40
+        trunk: 0.40
+        trunk_link: 0.40
+        primary: 0.55
+        secondary: 0.65
+        residential: 0.85
+        default: 0.60
+      "841e9b1ffffffff":     # Este — La Plata, Quilmes
+        motorway: 0.45
+        motorway_link: 0.45
+        trunk: 0.45
+        trunk_link: 0.45
+        primary: 0.60
+        secondary: 0.70
+        residential: 0.85
+        default: 0.65
+      DEFAULT:
+        motorway: 0.40
+        motorway_link: 0.40
+        trunk: 0.45
+        trunk_link: 0.45
+        primary: 0.55
+        secondary: 0.65
+        residential: 0.85
+        default: 0.55
+
+  pico_tarde:
+    horas: [17, 18, 19]     # 17:00-19:59
+    zonas:
+      "841e99dffffffff":     # Norte
+        motorway: 0.30
+        motorway_link: 0.30
+        trunk: 0.35
+        trunk_link: 0.35
+        primary: 0.50
+        secondary: 0.60
+        residential: 0.85
+        default: 0.55
+      "841e9b5ffffffff":     # Oeste
+        motorway: 0.35
+        motorway_link: 0.35
+        trunk: 0.40
+        trunk_link: 0.40
+        primary: 0.55
+        secondary: 0.65
+        residential: 0.85
+        default: 0.60
+      "841e991ffffffff":     # CABA Centro
+        motorway: 0.30
+        motorway_link: 0.30
+        trunk: 0.30
+        trunk_link: 0.30
+        primary: 0.40
+        secondary: 0.50
+        residential: 0.85
+        default: 0.45
+      "841e999ffffffff":     # Sur
+        motorway: 0.35
+        motorway_link: 0.35
+        trunk: 0.35
+        trunk_link: 0.35
+        primary: 0.50
+        secondary: 0.60
+        residential: 0.85
+        default: 0.55
+      "841e9b1ffffffff":     # Este
+        motorway: 0.40
+        motorway_link: 0.40
+        trunk: 0.40
+        trunk_link: 0.40
+        primary: 0.55
+        secondary: 0.65
+        residential: 0.85
+        default: 0.60
+      DEFAULT:
+        motorway: 0.40
+        motorway_link: 0.40
+        trunk: 0.40
+        trunk_link: 0.40
+        primary: 0.55
+        secondary: 0.65
+        residential: 0.85
+        default: 0.55
+
+  libre:
+    horas: []               # todas las horas no cubiertas arriba
+    zonas:
+      DEFAULT:
+        default: 1.0

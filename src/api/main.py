@@ -3,6 +3,8 @@ import time
 import math
 import asyncio
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, Depends
@@ -13,6 +15,7 @@ load_dotenv()
 
 from src.api.schemas import RouteRequest, RouteResponse, ParetoResult, FleetRequest, FleetResponse
 from src.block5.vrp_orchestrator import calculate_fleet
+from src.block5.speed_profile_loader import load_speed_profiles
 from src.bloque1.h3_router import build_h3_corridor
 from src.bloque1.duckdb_ingestor import extract_subgraph_edges, get_nearest_node_osm_id
 from src.bloque1.graph_builder import build_directed_graph
@@ -38,7 +41,7 @@ PRIORS_PATH = DATA_DIR / "priors_historicos.parquet"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Instanciar el semáforo DENTRO del loop de eventos activo
+    # 1. Instanciar el semaforo DENTRO del loop de eventos activo
     app.state.semaphore = asyncio.Semaphore(3)
     app.state.fleet_semaphore = asyncio.Semaphore(1)
     
@@ -78,8 +81,10 @@ async def lifespan(app: FastAPI):
 
     app.state.cost_settings = load_cost_settings()
     app.state.threat_matrix = load_h3_threat_matrix()
+    app.state.speed_profiles = load_speed_profiles()
     logger.info(f"Cost settings loaded: c_km_ars={app.state.cost_settings.c_km_ars}")
     logger.info(f"Threat matrix loaded: {len(app.state.threat_matrix)} hexagons in red zones.")
+    logger.info("speed_profiles loaded into app.state")
     yield
     # Cleanup on shutdown
     logger.info("Engine shutting down.")
@@ -92,7 +97,7 @@ async def fleet_endpoint(payload: FleetRequest, request: Request):
 
 @app.post('/route', response_model=RouteResponse, dependencies=[Depends(rate_limit_route)])
 async def calculate_route(payload: RouteRequest, request: Request):
-    # Obtener el semáforo vivo del estado de la aplicación
+    # Obtener el semaforo vivo del estado de la aplicacion
     semaphore = request.app.state.semaphore
     
     if semaphore.locked():
@@ -102,7 +107,7 @@ async def calculate_route(payload: RouteRequest, request: Request):
         start_time = time.time()
         
         try:
-            # ATENCIÓN AL CAMBIO DE NOMBRE: request de Pydantic ahora es 'payload'
+            # ATENCION AL CAMBIO DE NOMBRE: request de Pydantic ahora es 'payload'
             if not payload.vehicles or not payload.destinations:
                 raise HTTPException(status_code=400, detail="Missing vehicles or destinations.")
             
@@ -113,7 +118,7 @@ async def calculate_route(payload: RouteRequest, request: Request):
             origin_osm = get_nearest_node_osm_id(v.origin_lat, v.origin_lon)
             dest_osm = get_nearest_node_osm_id(d.lat, d.lon)
 
-            # 2. Resuelve el perfil económico dinámico
+            # 2. Resuelve el perfil economico dinamico
             client_cost_env = request.app.state.cost_settings
             if payload.economic_profile:
                 # Actualiza campos que no sean None enviando del cliente
@@ -148,7 +153,7 @@ async def calculate_route(payload: RouteRequest, request: Request):
             if target_rx is not None:
                 allowed_nodes.add(target_rx)
 
-            # Fail-Fast si el nodo no está en la red vial del subgrafo o corridor es inmenso
+            # Fail-Fast si el nodo no esta en la red vial del subgrafo o corridor es inmenso
             if source_rx is None or target_rx is None:
                 raise HTTPException(
                     status_code=400,
@@ -161,6 +166,21 @@ async def calculate_route(payload: RouteRequest, request: Request):
             # 5. Bayesian Judge natively reading the base graph
             judge = request.app.state.judge
             
+            # 5b. Resolver departure_hour para trafico dinamico
+            if payload.departure_time:
+                try:
+                    departure_hour = datetime.fromisoformat(payload.departure_time).hour
+                except (ValueError, TypeError):
+                    try:
+                        departure_hour = datetime.strptime(payload.departure_time, "%H:%M").hour
+                    except (ValueError, TypeError):
+                        departure_hour = datetime.now(tz=ZoneInfo("America/Argentina/Buenos_Aires")).hour
+            else:
+                departure_hour = datetime.now(tz=ZoneInfo("America/Argentina/Buenos_Aires")).hour
+            
+            speed_profiles = request.app.state.speed_profiles
+            logger.info(f"departure_hour resolved to {departure_hour}")
+            
             # 6. Construir proxy legacy (Zero-Copy)
             legacy_graph, config, financial_summary = build_legacy_graph(
                 rx_graph=base_graph,
@@ -169,7 +189,9 @@ async def calculate_route(payload: RouteRequest, request: Request):
                 source_rx_idx=source_rx,
                 target_rx_idx=target_rx,
                 cost_env=client_cost_env,
-                allowed_nodes=allowed_nodes
+                allowed_nodes=allowed_nodes,
+                departure_hour=departure_hour,
+                speed_profiles=speed_profiles
             )
             logger.info(f"Financial summary: {financial_summary}")
 
@@ -194,10 +216,22 @@ async def calculate_route(payload: RouteRequest, request: Request):
 
             # 9. Construir respuesta
             pareto_solutions = []
+            
+            soluciones_validas = [s for s in archetipos.values() if s is not None]
+            if soluciones_validas:
+                w_min = min(s.w_survival for s in soluciones_validas)
+                w_max = max(s.w_survival for s in soluciones_validas)
+                def normalize_confidence(w_survival):
+                    if w_max == w_min:
+                        return 100.0
+                    return round(100.0 * (w_max - w_survival) / (w_max - w_min), 1)
+            else:
+                normalize_confidence = lambda x: 0.0
+
             for archetype_name, sol in archetipos.items():
                 if sol is None:
                     continue
-                confidence = math.exp(-sol.w_survival)
+                confidence = normalize_confidence(sol.w_survival)
                 pareto_solutions.append(ParetoResult(
                     archetype=archetype_name,
                     w_survival=sol.w_survival,
