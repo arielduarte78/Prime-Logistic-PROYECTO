@@ -32,6 +32,7 @@ class RouteRequest(BaseModel):
     destinations: List[DestinationInput]
     risk_profile: str = "balanced"
     economic_profile: Optional[EconomicProfile] = None
+    departure_time: Optional[str] = None
 
 class ParetoResult(BaseModel):
     archetype: str
@@ -51,6 +52,7 @@ class FleetRequest(BaseModel):
     allowed_archetypes: List[str] = ["tanque", "apostador", "equilibrista"]
     time_limit_seconds: int = 10
     economic_profile: Optional[EconomicProfile] = None
+    departure_time: Optional[str] = None
 
 class FleetResponse(BaseModel):
     subgraph_edges: int

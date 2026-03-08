@@ -13,7 +13,9 @@ def build_dense_cost_matrix(
     cost_env: Any,
     threat_matrix: dict,
     judge: Any,
-    osm_to_rx: dict
+    osm_to_rx: dict,
+    departure_hour: int = 12,
+    speed_profiles: dict = None
 ) -> List[List[int]]:
     """
     Given a list of node indices in the graph (combination of vehicles and destinations),
@@ -30,13 +32,17 @@ def build_dense_cost_matrix(
         graph: The full PyDiGraph.
         nodes_of_interest: List of rustworkx node IDs (vehicles followed by destinations).
         archetype: The targeted archetype (e.g., 'equilibrista').
+        departure_hour: Hour of departure (0-23) for traffic multiplier.
+        speed_profiles: Speed profile dictionary from YAML config.
 
     Returns:
         A dense 2D list matrix `matrix[i][j]` representing scaled cost.
     """
+    if speed_profiles is None:
+        speed_profiles = {}
     matrix: List[List[int]] = []
     
-    weight_fn = get_weight_function(archetype, cost_env, threat_matrix, judge, osm_to_rx)
+    weight_fn = get_weight_function(archetype, cost_env, threat_matrix, judge, osm_to_rx, departure_hour, speed_profiles)
     
     n_size = len(nodes_of_interest)
     

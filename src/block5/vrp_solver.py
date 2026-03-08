@@ -63,8 +63,16 @@ def solve_vrp(
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
     search_parameters.first_solution_strategy = (
         routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
-    search_parameters.local_search_metaheuristic = (
-        routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
+
+    # Para problemas pequeños, AUTOMATIC es más rápido que GUIDED_LOCAL_SEARCH
+    n_nodes = len(cost_matrix)
+    if n_nodes <= 10:
+        search_parameters.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC)
+    else:
+        search_parameters.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
+
     search_parameters.time_limit.FromSeconds(time_limit_seconds)
 
     # Execute

@@ -3,6 +3,7 @@ import math
 from typing import Iterator, Set, Dict, Any, TYPE_CHECKING
 from src.bloque4.schema import Edge, Node
 from src.bloque1.graph_builder import EdgePayload
+from src.block5.speed_profile_loader import get_h3_parent, get_velocity_multiplier
 
 if TYPE_CHECKING:
     import rustworkx as rx
@@ -27,7 +28,15 @@ class LazyEdgeIterable:
             w_survival = -math.log(max(p_survival, 1e-9))
 
             dist_km = payload.length / 1000.0
-            time_hr = dist_km / self.lg.cost_env.velocidad_comercial_kmh
+            
+            # V1.4.10: Velocidad efectiva con multiplicador de trafico
+            h3_parent = get_h3_parent(payload.h3_index)
+            multiplier = get_velocity_multiplier(
+                self.lg.speed_profiles, payload.highway, h3_parent, self.lg.departure_hour
+            )
+            effective_velocity = self.lg.cost_env.velocidad_comercial_kmh * multiplier
+            time_hr = dist_km / effective_velocity
+            
             financial_cost_ars = (dist_km * self.lg.cost_env.c_km_ars) + (time_hr * self.lg.cost_env.c_hora_ars)
 
             if payload.h3_index and payload.h3_index in self.lg.threat_matrix:
@@ -84,7 +93,9 @@ class LazyEdgeView:
         cost_env: Any, # Usually CostSettings or an object simulating it
         threat_matrix: Dict[str, float],
         ruta_tipica_km: float,
-        judge: 'BayesianJudge'
+        judge: 'BayesianJudge',
+        departure_hour: int = 12,
+        speed_profiles: dict = None
     ):
         self.rx_graph = rx_graph
         self.allowed_nodes = allowed_nodes
@@ -92,6 +103,8 @@ class LazyEdgeView:
         self.threat_matrix = threat_matrix
         self.ruta_tipica_km = ruta_tipica_km
         self.judge = judge
+        self.departure_hour = departure_hour
+        self.speed_profiles = speed_profiles if speed_profiles is not None else {}
         
         self.highway_tolls = {"motorway", "motorway_link", "trunk", "trunk_link"}
 
@@ -106,4 +119,3 @@ class LazyEdgeView:
     @property
     def edges(self) -> LazyEdgeIterable:
         return LazyEdgeIterable(self)
-
