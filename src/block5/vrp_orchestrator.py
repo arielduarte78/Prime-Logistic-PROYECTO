@@ -71,9 +71,10 @@ def _compute_archetype_plan(
 ) -> tuple:
     """
     Función sincrónica pura para un arquetipo.
-    Retorna (archetype, plan_dict, legs_count).
+    Retorna (archetype, plan_dict, legs_count, fallback_count).
     Diseñada para correr en ThreadPoolExecutor.
     """
+    fallback_counter = [0]
     # Phase 2
     t0_p2 = time.time()
     cost_matrix, _ = build_dense_cost_matrix(
@@ -83,7 +84,8 @@ def _compute_archetype_plan(
         departure_hour=departure_hour,
         speed_profiles=speed_profiles,
         precomputed_time_matrix=shared_time_matrix,
-        node_filter=p2_subgraph_nodes
+        node_filter=p2_subgraph_nodes,
+        fallback_counter=fallback_counter
     )
     p2_time = time.time() - t0_p2
 
@@ -256,7 +258,8 @@ def _compute_archetype_plan(
                 cost_env=client_cost_env,
                 allowed_nodes=segment_nodes,
                 departure_hour=departure_hour,
-                speed_profiles=speed_profiles
+                speed_profiles=speed_profiles,
+                fallback_counter=fallback_counter
             )
 
 
@@ -373,7 +376,7 @@ def _compute_archetype_plan(
 
     }
 
-    return archetype, plan_dict, legs_count
+    return archetype, plan_dict, legs_count, fallback_counter[0]
 
 
 
@@ -583,6 +586,8 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
 
     total_phase4_legs = 0
 
+    total_fallback_edges = 0
+
     
 
     nodes_of_interest = V_rx + D_rx
@@ -715,9 +720,10 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
     
     archetype_results = await asyncio.gather(*archetype_futures)
     
-    for archetype, plan_dict, legs_count in archetype_results:
+    for archetype, plan_dict, legs_count, fallback_count in archetype_results:
         archetype_plans[archetype] = plan_dict
         total_phase4_legs += legs_count
+        total_fallback_edges += fallback_count
         
     shift_limit_enforced = any(v.max_shift_minutes < 1440 for v in payload.vehicles)
 
@@ -731,6 +737,7 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
         subgraph_edges=total_edges_subgraph,
         total_time_ms=total_time_ms,
         phase4_total_legs=total_phase4_legs,
+        toll_fallback_edges=total_fallback_edges,
         plans=archetype_plans,
         time_windows_enforced=has_real_windows,
         shift_limit_enforced=shift_limit_enforced

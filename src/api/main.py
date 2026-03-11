@@ -1,13 +1,15 @@
-#main.py
+#src/api/main.py
 import time
 import math
 import asyncio
 import logging
-from datetime import datetime
+import json
+import hashlib
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends, BackgroundTasks
 from dotenv import load_dotenv
 
 # Cargar variables de entorno al inicio
@@ -28,7 +30,7 @@ from src.bloque4.pareto import ParetoFrontResult
 import duckdb
 from src.config.settings import load_cost_settings
 from src.bloque3.threat_loader import load_h3_threat_matrix
-from src.api.security import rate_limit_route, rate_limit_fleet
+from src.api.security import rate_limit_route, rate_limit_fleet, verify_api_key
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PrimeAPI")
@@ -38,6 +40,8 @@ DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "parquet_db"
 EDGES_PATH = DATA_DIR / "edges.parquet"
 NODES_PATH = DATA_DIR / "nodes.parquet"
 PRIORS_PATH = DATA_DIR / "priors_historicos.parquet"
+AUDIT_LOG_DIR = Path("data/audit_logs")
+AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -161,8 +165,60 @@ def _validate_not_same(origin_lat, origin_lon, dest_lat, dest_lon):
             detail="Origen y destino son idénticos."
         )
 
+def _write_audit_log(
+    endpoint: str,
+    request_payload: dict,
+    response_payload: dict,
+    api_key_hash: str,
+    processing_ms: float
+) -> None:
+    """
+    Escribe registro forense inmutable a disco.
+    Diseñado para ser llamado en background sin bloquear el response.
+    El hash SHA-256 del payload permite detectar manipulación posterior.
+    """
+    try:
+        payload_str = json.dumps(request_payload, sort_keys=True, default=str)
+        payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
+        
+        record = {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "endpoint": endpoint,
+            "api_key_hash": api_key_hash,
+            "processing_ms": round(processing_ms, 2),
+            "payload_sha256": payload_hash,
+            "request": request_payload,
+            "response_summary": {
+                "total_time_ms": response_payload.get("total_time_ms"),
+                "time_windows_enforced": response_payload.get("time_windows_enforced"),
+                "shift_limit_enforced": response_payload.get("shift_limit_enforced"),
+                "toll_fallback_edges": response_payload.get("toll_fallback_edges", 0),
+                "phase4_total_legs": response_payload.get("phase4_total_legs"),
+                "archetypes_computed": list(response_payload.get("plans", {}).keys()),
+                "uncovered_per_archetype": {
+                    arch: [d["id"] for d in plan.get("uncovered", [])]
+                    for arch, plan in response_payload.get("plans", {}).items()
+                    if isinstance(plan, dict) and "uncovered" in plan
+                }
+            }
+        }
+        
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        filename = AUDIT_LOG_DIR / f"{date_str}.jsonl"
+        
+        with open(filename, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+            
+    except Exception as e:
+        logger.error(f"Audit log write failed: {e}")
+
 @app.post('/fleet', response_model=FleetResponse, dependencies=[Depends(rate_limit_fleet)])
-async def fleet_endpoint(payload: FleetRequest, request: Request):
+async def fleet_endpoint(
+    payload: FleetRequest, 
+    request: Request,
+    background_tasks: BackgroundTasks,
+    api_key: str = Depends(verify_api_key)
+):
     semaphore = request.app.state.fleet_semaphore
     try:
         await asyncio.wait_for(semaphore.acquire(), timeout=0.1)
@@ -174,7 +230,17 @@ async def fleet_endpoint(payload: FleetRequest, request: Request):
             None, lambda: calculate_fleet(payload, request)
         )
         if asyncio.iscoroutine(result):
-            return await result
+            result = await result
+            
+        background_tasks.add_task(
+            _write_audit_log,
+            endpoint="/fleet",
+            request_payload=payload.model_dump(),
+            response_payload=result.model_dump(),
+            api_key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
+            processing_ms=result.total_time_ms
+        )
+        
         return result
     except HTTPException:
         raise
@@ -185,7 +251,12 @@ async def fleet_endpoint(payload: FleetRequest, request: Request):
         semaphore.release()
 
 @app.post('/route', response_model=RouteResponse, dependencies=[Depends(rate_limit_route)])
-async def calculate_route(payload: RouteRequest, request: Request):
+async def calculate_route(
+    payload: RouteRequest, 
+    request: Request,
+    background_tasks: BackgroundTasks,
+    api_key: str = Depends(verify_api_key)
+):
     # Obtener el semaforo vivo del estado de la aplicacion
     semaphore = request.app.state.semaphore
     
@@ -278,6 +349,7 @@ async def calculate_route(payload: RouteRequest, request: Request):
         speed_profiles = request.app.state.speed_profiles
         logger.info(f"departure_hour resolved to {departure_hour}")
         
+        fallback_counter = [0]
         # 6. Construir proxy legacy (Zero-Copy)
         legacy_graph, config, financial_summary = build_legacy_graph(
             rx_graph=base_graph,
@@ -288,7 +360,8 @@ async def calculate_route(payload: RouteRequest, request: Request):
             cost_env=client_cost_env,
             allowed_nodes=allowed_nodes,
             departure_hour=departure_hour,
-            speed_profiles=speed_profiles
+            speed_profiles=speed_profiles,
+            fallback_counter=fallback_counter
         )
         logger.info(f"Financial summary: {financial_summary}")
 
@@ -350,11 +423,23 @@ async def calculate_route(payload: RouteRequest, request: Request):
         
         proc_time_ms = (time.time() - start_time) * 1000
         
-        return RouteResponse(
+        result = RouteResponse(
             processing_time_ms=proc_time_ms,
             total_edges=0, # total_edges attribute meaning changes as we lazily query, we don't return an accurate global sum without looping, so we set it to 0. It is not required to be accurate.
+            toll_fallback_edges=fallback_counter[0],
             pareto_solutions=pareto_solutions
         )
+        
+        background_tasks.add_task(
+            _write_audit_log,
+            endpoint="/route",
+            request_payload=payload.model_dump(),
+            response_payload=result.model_dump(),
+            api_key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
+            processing_ms=proc_time_ms
+        )
+        
+        return result
         
     except HTTPException:
         raise

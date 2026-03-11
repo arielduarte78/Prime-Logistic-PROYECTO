@@ -38,26 +38,8 @@ class LazyEdgeIterable:
             effective_velocity = self.lg.cost_env.velocidad_comercial_kmh * multiplier
             time_hr = dist_km / effective_velocity
             
-            # Use unified calculator logic default (weight is total cost w_expected_cost)
-            # The archetype passed doesn't matter since the risk multipliers are computed inside
-            
-            w_expected_cost = compute_edge_cost(
-                payload=payload,
-                u_rx=u_rx,
-                v_rx=v_rx,
-                cost_env=self.lg.cost_env,
-                threat_matrix=self.lg.threat_matrix,
-                judge=self.lg.judge,
-                departure_hour=self.lg.departure_hour,
-                speed_profiles=self.lg.speed_profiles,
-                archetype='tanque' # Just to comply with signature, unused directly here
-            )
-            # Override for absolute parity
-            lambda_cost, lambda_risk = 1.0, 0.0
-            financial_cost_ars = w_expected_cost # this is the base we get from pure calc
-            
-            # Recalculate pure financial cost manually for schema parity or pass 1.0 archetype
-            w_expected_cost = compute_edge_cost(
+            #Costo financiero puro: archetype='none' aplica lambda_cost=1.0, lambda_risk=0.0
+            w_expected_cost, used_fallback = compute_edge_cost(
                 payload=payload,
                 u_rx=u_rx,
                 v_rx=v_rx,
@@ -68,6 +50,9 @@ class LazyEdgeIterable:
                 speed_profiles=self.lg.speed_profiles,
                 archetype='none' # using 1.0 cost / 0 risk for raw expected cost
             )
+
+            if used_fallback and self.lg.fallback_counter is not None:
+                self.lg.fallback_counter[0] += 1
 
             yield Edge(
                 edge_id=f"{u_rx}_{v_rx}_{i}",
@@ -98,7 +83,8 @@ class LazyEdgeView:
         ruta_tipica_km: float,
         judge: 'BayesianJudge',
         departure_hour: int = 12,
-        speed_profiles: dict = None
+        speed_profiles: dict = None,
+        fallback_counter: list = None
     ):
         self.rx_graph = rx_graph
         self.allowed_nodes = allowed_nodes
@@ -108,6 +94,7 @@ class LazyEdgeView:
         self.judge = judge
         self.departure_hour = departure_hour
         self.speed_profiles = speed_profiles if speed_profiles is not None else {}
+        self.fallback_counter = fallback_counter
         
         self.highway_tolls = {"motorway", "motorway_link", "trunk", "trunk_link"}
 

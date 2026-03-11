@@ -37,7 +37,8 @@ def get_weight_function(
     osm_to_rx: dict,
     departure_hour: int = 12,
     speed_profiles: dict = None,
-    node_filter: set = None
+    node_filter: set = None,
+    fallback_counter: list = None
 ) -> Callable[[Any], float]:
     if speed_profiles is None:
         speed_profiles = {}
@@ -50,13 +51,16 @@ def get_weight_function(
             return math.inf
 
         cache_key = (id(payload), departure_hour, archetype)
-        cached, hit = _cache_get(cache_key)
+        cached_tuple, hit = _cache_get(cache_key)
         if hit:
-            return cached
+            cost_result, fb_used = cached_tuple
+            if fb_used and fallback_counter is not None:
+                fallback_counter[0] += 1
+            return cost_result
 
         u_rx = osm_to_rx.get(payload.u_osm)
 
-        result = compute_edge_cost(
+        result, used_fallback = compute_edge_cost(
             payload=payload,
             u_rx=u_rx,
             v_rx=v_rx,
@@ -68,7 +72,10 @@ def get_weight_function(
             archetype=archetype
         )
 
-        _cache_set(cache_key, result)
+        if used_fallback and fallback_counter is not None:
+            fallback_counter[0] += 1
+
+        _cache_set(cache_key, (result, used_fallback))
         return result
 
     return weight_func

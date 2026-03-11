@@ -32,7 +32,8 @@ def build_legacy_graph(
     cost_env: Any,
     allowed_nodes: set[int],
     departure_hour: int = 12,
-    speed_profiles: dict = None
+    speed_profiles: dict = None,
+    fallback_counter: list = None
 ) -> Tuple[Any, OptimizerConfig, Dict[str, float]]:
     
     start_time = time.time()
@@ -46,7 +47,8 @@ def build_legacy_graph(
         ruta_tipica_km=RUTA_TIPICA_KM,
         judge=judge,
         departure_hour=departure_hour,
-        speed_profiles=speed_profiles if speed_profiles is not None else {}
+        speed_profiles=speed_profiles if speed_profiles is not None else {},
+        fallback_counter=fallback_counter
     )
     
     config = OptimizerConfig(

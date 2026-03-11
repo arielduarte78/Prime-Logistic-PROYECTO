@@ -62,6 +62,7 @@ class ParetoResult(BaseModel):
 class RouteResponse(BaseModel):
     processing_time_ms: float
     total_edges: int
+    toll_fallback_edges: int = 0
     pareto_solutions: List[ParetoResult]
 
 class FleetRequest(BaseModel):
@@ -77,6 +78,7 @@ class FleetResponse(BaseModel):
     subgraph_edges: int
     total_time_ms: float
     phase4_total_legs: int
+    toll_fallback_edges: int = 0
     plans: Dict[str, Any]
     time_windows_enforced: bool = False
     shift_limit_enforced: bool = False
