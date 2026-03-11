@@ -38,7 +38,7 @@ coverage.xml
 # Caché de mapas OSMnx y telemetría
 data/osm_cache/
 output/
-*.lock
+# *.lock  # COMENTADO: uv.lock es el contrato de dependencias (fuente innegociable determinístico)
 *.tmp
 
 # Entornos virtuales
@@ -115,3 +115,6 @@ scripts/utils/
 
 # Scripts paralelos
 cleanup_root.py
+
+# Audit logs
+data/audit_logs/
