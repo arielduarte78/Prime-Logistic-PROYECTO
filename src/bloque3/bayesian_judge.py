@@ -79,3 +79,28 @@ class BayesianJudge:
         if idx is not None:
             self._alphas[idx] += np.float32(successes)
             self._betas[idx] += np.float32(failures)
+
+    def load_stochastic_overrides(self, stochastic_priors_df, osm_to_rx: dict) -> int:
+        """
+        Overwrite Bayesian priors with Monte Carlo degraded values.
+
+        Args:
+            stochastic_priors_df: DataFrame with columns u_osm, v_osm, alpha_degraded, beta_degraded.
+            osm_to_rx: Mapping from OSM node IDs to rustworkx internal indices.
+
+        Returns:
+            Number of edges successfully updated.
+        """
+        updated = 0
+        for row in stochastic_priors_df.itertuples(index=False):
+            u_rx = osm_to_rx.get(int(row.u_osm))
+            v_rx = osm_to_rx.get(int(row.v_osm))
+            if u_rx is None or v_rx is None:
+                continue
+            pos = self._arc_index.get((u_rx, v_rx))
+            if pos is not None:
+                self._alphas[pos] = np.float32(row.alpha_degraded)
+                self._betas[pos] = np.float32(row.beta_degraded)
+                updated += 1
+        logger.info(f"Stochastic overrides applied: {updated} edges updated.")
+        return updated

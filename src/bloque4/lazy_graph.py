@@ -4,6 +4,7 @@ from typing import Iterator, Set, Dict, Any, TYPE_CHECKING
 from src.bloque4.schema import Edge, Node
 from src.bloque1.graph_builder import EdgePayload
 from src.block5.speed_profile_loader import get_h3_parent, get_velocity_multiplier
+from src.bloque4.cost_calculator import compute_edge_cost
 
 if TYPE_CHECKING:
     import rustworkx as rx
@@ -37,34 +38,36 @@ class LazyEdgeIterable:
             effective_velocity = self.lg.cost_env.velocidad_comercial_kmh * multiplier
             time_hr = dist_km / effective_velocity
             
-            financial_cost_ars = (dist_km * self.lg.cost_env.c_km_ars) + (time_hr * self.lg.cost_env.c_hora_ars)
-
-            if payload.h3_index and payload.h3_index in self.lg.threat_matrix:
-                mu = self.lg.threat_matrix[payload.h3_index]
-                guardia_cost = time_hr * self.lg.cost_env.custodia_hora_ars * mu
-                financial_cost_ars += guardia_cost
-
-            if payload.highway in self.lg.highway_tolls:
-                name_upper = payload.name.upper() if payload.name else ""
-                if "25 DE MAYO" in name_upper or "PERITO MORENO" in name_upper:
-                    financial_cost_ars += self.lg.cost_env.ausa_25_mayo_ars
-                elif "PASEO DEL BAJO" in name_upper or "BAJO" in name_upper:
-                    financial_cost_ars += self.lg.cost_env.ausa_paseo_bajo_ars
-                elif ("PANAMERICANA" in name_upper or "ACCESO NORTE" in name_upper
-                      or "ACCESO OESTE" in name_upper):
-                    financial_cost_ars += self.lg.cost_env.acceso_norte_oeste_ars
-                elif ("BUENOS AIRES - LA PLATA" in name_upper
-                      or "BUENOS AIRES-LA PLATA" in name_upper
-                      or "RICCHERI" in name_upper):
-                    financial_cost_ars += self.lg.cost_env.aubasa_sur_ars
-                else:
-                    financial_cost_ars += self.lg.cost_env.peaje_promedio_ars
-
-            franquicia_ars = self.lg.cost_env.franquicia_seguro_usd * self.lg.cost_env.dolar_mep_ars
-            route_fraction = dist_km / self.lg.ruta_tipica_km
-            risk_cost_ars = p_failure * franquicia_ars * route_fraction
+            # Use unified calculator logic default (weight is total cost w_expected_cost)
+            # The archetype passed doesn't matter since the risk multipliers are computed inside
             
-            w_expected_cost = financial_cost_ars + risk_cost_ars
+            w_expected_cost = compute_edge_cost(
+                payload=payload,
+                u_rx=u_rx,
+                v_rx=v_rx,
+                cost_env=self.lg.cost_env,
+                threat_matrix=self.lg.threat_matrix,
+                judge=self.lg.judge,
+                departure_hour=self.lg.departure_hour,
+                speed_profiles=self.lg.speed_profiles,
+                archetype='tanque' # Just to comply with signature, unused directly here
+            )
+            # Override for absolute parity
+            lambda_cost, lambda_risk = 1.0, 0.0
+            financial_cost_ars = w_expected_cost # this is the base we get from pure calc
+            
+            # Recalculate pure financial cost manually for schema parity or pass 1.0 archetype
+            w_expected_cost = compute_edge_cost(
+                payload=payload,
+                u_rx=u_rx,
+                v_rx=v_rx,
+                cost_env=self.lg.cost_env,
+                threat_matrix=self.lg.threat_matrix,
+                judge=self.lg.judge,
+                departure_hour=self.lg.departure_hour,
+                speed_profiles=self.lg.speed_profiles,
+                archetype='none' # using 1.0 cost / 0 risk for raw expected cost
+            )
 
             yield Edge(
                 edge_id=f"{u_rx}_{v_rx}_{i}",

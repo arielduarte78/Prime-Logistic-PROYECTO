@@ -1,12 +1,7 @@
 meta:
-  schema_version: "1.0"
-  description: "Manifiesto de eventos de riesgo logístico para Argentina"
-  modeling_philosophy: >
-    Priors conservadores con sensibilidad calibrada.
-    Stress testing y recalibración futura.
-    Dependencias evaluadas en orden topológico.
-    Impactos combinados multiplicativamente.
-  geographic_context: "Argentina"
+  schema_version: "2.0"
+  description: "Manifiesto calibrado para red vial AMBA — OSM IDs"
+  geographic_context: "AMBA — Buenos Aires"
 
 global_parameters:
   stress_index: baseline
@@ -27,7 +22,7 @@ global_parameters:
 
 event_levels:
   SYSTEMIC:
-    description: "Eventos de alcance nacional o regional"
+    description: "Eventos de alcance regional AMBA"
     frequency_profile: "very_low"
     typical_impact_scope: "global"
     allowed_target_types: [NETWORK, ZONE, ARC, NODE]
@@ -35,39 +30,19 @@ event_levels:
     description: "Eventos zonales o sectoriales"
     frequency_profile: "low"
     typical_impact_scope: "regional"
-    allowed_target_types: [NODE, ARC, ZONE]
+    allowed_target_types: [NODE, ARC, ZONE, NETWORK]
   MICRO:
     description: "Eventos operativos cotidianos"
-    frequency_profile: "medium"
+    frequency_profile: "high"
     typical_impact_scope: "local"
-    allowed_target_types: [UNIT, NODE, ARC]
-
+    allowed_target_types: [UNIT, NODE, ARC, NETWORK]
 
 events:
-
   # ===== SYSTEMIC =====
-
-  - code: INUNDACION_REGIONAL
-    level: SYSTEMIC
-    description: "Inundación regional"
-    p_base: 0.002
-    distribution: { type: EVT, parameters: {} }
-    stress_weight: 1.3
-    conditioners: []
-    target: { type: ZONE, selector: "REGION_*" }
-    structural_effects:
-      adjacency: { action: NONE }
-      capacity: { modifier: 0.7 }
-      demand: { modifier: 1.2 }
-    metric_impacts:
-      - metric: T
-        base_multiplier: 1.5
-        stress_scaling: gamma
-
   - code: PARO_NACIONAL_TRANSPORTE
     level: SYSTEMIC
-    description: "Paro nacional de transporte"
-    p_base: 0.001
+    description: "Paro nacional de transporte — red completa inactiva"
+    p_base: 0.002
     distribution: { type: EVT, parameters: {} }
     stress_weight: 1.5
     conditioners: []
@@ -83,8 +58,8 @@ events:
 
   - code: CRISIS_COMBUSTIBLE
     level: SYSTEMIC
-    description: "Crisis de combustible"
-    p_base: 0.003
+    description: "Crisis de combustible — costos se duplican en toda la red"
+    p_base: 0.008
     distribution: { type: EVT, parameters: {} }
     stress_weight: 1.4
     conditioners: []
@@ -101,36 +76,95 @@ events:
         base_multiplier: 1.2
         stress_scaling: gamma
 
-  - code: OLA_CALOR_EXTREMA
+  - code: INUNDACION_CONURBANO
     level: SYSTEMIC
-    description: "Ola de calor extrema"
-    p_base: 0.01
+    description: "Inundación regional — capacidad reducida en toda la red"
+    p_base: 0.015
     distribution: { type: EVT, parameters: {} }
-    stress_weight: 1.2
+    stress_weight: 1.3
     conditioners: []
     target: { type: NETWORK, selector: "ALL" }
     structural_effects:
       adjacency: { action: NONE }
-      capacity: { modifier: 0.9 }
-      demand: { modifier: 1.05 }
+      capacity: { modifier: 0.7 }
+      demand: { modifier: 1.2 }
     metric_impacts:
       - metric: T
-        base_multiplier: 1.1
+        base_multiplier: 1.5
         stress_scaling: gamma
 
   # ===== TACTICAL =====
-
-  - code: HUELGA_ALMACEN
+  - code: CORTE_ACCESO_NORTE
     level: TACTICAL
-    description: "Huelga localizada en almacén"
-    p_base: 0.01
+    description: "Corte en zona norte AMBA — Panamericana y accesos"
+    p_base: 0.04
+    distribution: { type: LOGNORMAL, parameters: {} }
+    stress_weight: 1.2
+    conditioners:
+      - event: INUNDACION_CONURBANO
+        multiplier: 3.0
+        scope: probability
+    target: { type: NETWORK, selector: "ALL" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.6 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.8
+        stress_scaling: gamma
+
+  - code: CORTE_ACCESO_OESTE
+    level: TACTICAL
+    description: "Corte en zona oeste AMBA — Acceso Oeste y ramales"
+    p_base: 0.04
+    distribution: { type: LOGNORMAL, parameters: {} }
+    stress_weight: 1.2
+    conditioners:
+      - event: INUNDACION_CONURBANO
+        multiplier: 3.0
+        scope: probability
+    target: { type: NETWORK, selector: "ALL" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.6 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.8
+        stress_scaling: gamma
+
+  - code: CORTE_ACCESO_SUR
+    level: TACTICAL
+    description: "Corte en zona sur AMBA — Riccheri y autopista La Plata"
+    p_base: 0.04
+    distribution: { type: LOGNORMAL, parameters: {} }
+    stress_weight: 1.2
+    conditioners:
+      - event: INUNDACION_CONURBANO
+        multiplier: 3.0
+        scope: probability
+    target: { type: NETWORK, selector: "ALL" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.6 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.8
+        stress_scaling: gamma
+
+  - code: HUELGA_TRANSPORTE_ZONA
+    level: TACTICAL
+    description: "Huelga de transporte zonal"
+    p_base: 0.03
     distribution: { type: LOGNORMAL, parameters: {} }
     stress_weight: 1.1
     conditioners:
       - event: PARO_NACIONAL_TRANSPORTE
         multiplier: 8.0
         scope: probability
-    target: { type: NODE, selector: "WAREHOUSE_*" }
+    target: { type: NETWORK, selector: "ALL" }
     structural_effects:
       adjacency: { action: NONE }
       capacity: { modifier: 0.5 }
@@ -140,75 +174,66 @@ events:
         base_multiplier: 1.3
         stress_scaling: gamma
 
-  - code: BLOQUEO_RUTA
-    level: TACTICAL
-    description: "Bloqueo de ruta"
-    p_base: 0.02
-    distribution: { type: LOGNORMAL, parameters: {} }
-    stress_weight: 1.2
-    conditioners:
-      - event: INUNDACION_REGIONAL
-        multiplier: 4.0
-        scope: impact
-    target: { type: ARC, selector: "ROAD_*" }
-    structural_effects:
-      adjacency: { action: DISABLE }
-      capacity: { modifier: 0.0 }
-      demand: { modifier: 1.0 }
-    metric_impacts:
-      - metric: T
-        base_multiplier: 2.0
-        stress_scaling: gamma
-
-  - code: CORTE_ENERGETICO_ZONA
-    level: TACTICAL
-    description: "Corte energético regional"
-    p_base: 0.01
-    distribution:
-      type: POISSON
-      parameters: { lambda: 1.0 }
-    stress_weight: 1.1
-    conditioners:
-      - event: OLA_CALOR_EXTREMA
-        multiplier: 5.0
-        scope: probability
-    target: { type: ZONE, selector: "ZONE_*" }
-    structural_effects:
-      adjacency: { action: NONE }
-      capacity: { modifier: 0.4 }
-      demand: { modifier: 1.0 }
-    metric_impacts:
-      - metric: T
-        base_multiplier: 1.2
-        stress_scaling: gamma
-
   # ===== MICRO =====
-
-  - code: RETRASO_CARGA_OPERATIVO
+  - code: CONGESTION_PICO_MANANA
     level: MICRO
-    description: "Retraso operativo menor"
-    p_base: 0.15
+    description: "Congestión hora pico mañana — velocidad reducida red completa"
+    p_base: 0.45
     distribution: { type: LOGNORMAL, parameters: {} }
-    stress_weight: 0.8
+    stress_weight: 0.6
     conditioners: []
-    target: { type: NODE, selector: "WAREHOUSE_*" }
+    target: { type: NETWORK, selector: "ALL" }
     structural_effects:
       adjacency: { action: NONE }
       capacity: { modifier: 0.95 }
       demand: { modifier: 1.0 }
     metric_impacts:
       - metric: T
-        base_multiplier: 1.05
+        base_multiplier: 1.35
         stress_scaling: gamma
 
-  - code: FALLA_MECANICA_LEVE
+  - code: CONGESTION_PICO_TARDE
     level: MICRO
-    description: "Falla mecánica leve"
-    p_base: 0.08
-    distribution: { type: EVT, parameters: {} }
-    stress_weight: 0.9
+    description: "Congestión hora pico tarde"
+    p_base: 0.45
+    distribution: { type: LOGNORMAL, parameters: {} }
+    stress_weight: 0.6
     conditioners: []
-    target: { type: UNIT, selector: "TRUCK_*" }
+    target: { type: NETWORK, selector: "ALL" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.95 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.35
+        stress_scaling: gamma
+
+  - code: ACCIDENTE_VIAL
+    level: MICRO
+    description: "Accidente vial — demora puntual en corredor"
+    p_base: 0.25
+    distribution: { type: LOGNORMAL, parameters: {} }
+    stress_weight: 0.7
+    conditioners: []
+    target: { type: NETWORK, selector: "ALL" }
+    structural_effects:
+      adjacency: { action: NONE }
+      capacity: { modifier: 0.85 }
+      demand: { modifier: 1.0 }
+    metric_impacts:
+      - metric: T
+        base_multiplier: 1.2
+        stress_scaling: gamma
+
+  - code: FALLA_MECANICA
+    level: MICRO
+    description: "Falla mecánica de unidad en ruta"
+    p_base: 0.12
+    distribution: { type: EVT, parameters: {} }
+    stress_weight: 0.8
+    conditioners: []
+    target: { type: NETWORK, selector: "ALL" }
     structural_effects:
       adjacency: { action: NONE }
       capacity: { modifier: 0.9 }
@@ -216,21 +241,4 @@ events:
     metric_impacts:
       - metric: T
         base_multiplier: 1.1
-        stress_scaling: gamma
-
-  - code: CONGESTION_URBANA
-    level: MICRO
-    description: "Congestión urbana puntual"
-    p_base: 0.2
-    distribution: { type: LOGNORMAL, parameters: {} }
-    stress_weight: 0.7
-    conditioners: []
-    target: { type: ARC, selector: "URBAN_ROAD_*" }
-    structural_effects:
-      adjacency: { action: NONE }
-      capacity: { modifier: 0.85 }
-      demand: { modifier: 1.0 }
-    metric_impacts:
-      - metric: T
-        base_multiplier: 1.08
         stress_scaling: gamma
