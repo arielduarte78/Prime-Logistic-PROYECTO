@@ -1,9 +1,10 @@
-import copy
+#src/bloque2/generator.py
 import numpy as np
 import random
 from typing import List, Dict, Any, Optional, Sequence
 from dataclasses import dataclass, field
 from scipy.sparse import issparse
+import scipy.sparse as sp
 
 from bloque2.incidents import (
     Manifest, IncidentDefinition, Category, TargetType, AdjacencyAction
@@ -107,22 +108,24 @@ class NetworkActor:
         # 1. Kill-switch (A y K)
         if incident.structural_effects.adjacency.action == AdjacencyAction.DISABLE:
             if issparse(net.A):
-                net.A = net.A.tolil()
-                net.K = net.K.tolil()
-
-            for idx in indices:
-                net.A[idx, :] = 0
-                net.A[:, idx] = 0
-                net.K[idx, :] = 0
-                net.K[:, idx] = 0
-
-            if not isinstance(net.A, np.ndarray):
-                net.A = net.A.tocsr()
-                net.K = net.K.tocsr()
+                n = net.A.shape[0]
+                mask = np.ones(n, dtype=np.float64)
+                mask[indices] = 0.0
+                diag = sp.diags(mask, format="csr")
+                net.A = diag.dot(net.A).dot(diag)
+                net.K = diag.dot(net.K).dot(diag)
+            else:
+                for idx in indices:
+                    net.A[idx, :] = 0
+                    net.A[:, idx] = 0
+                    net.K[idx, :] = 0
+                    net.K[:, idx] = 0
 
         # 2. Capacidad (Solo si es Sistémico)
         if (incident.level == Category.SYSTEMIC and
                 incident.structural_effects.capacity.modifier != 1.0):
+            if issparse(net.K) and not isinstance(net.K, sp.csr_matrix):
+                net.K = net.K.tocsr()
             for idx in indices:
                 if issparse(net.K):
                     net.K.data[net.K.indptr[idx]:net.K.indptr[idx + 1]] *= (
@@ -157,7 +160,15 @@ class MonteCarloGenerator:
         self.seed = seed
 
     def _generate_single_scenario(self, scenario_id: int) -> Scenario:
-        net = copy.deepcopy(self.base_network)
+        net = NetworkSnapshot(
+            A=self.base_network.A.copy(),
+            C=self.base_network.C.copy(),
+            T=self.base_network.T.copy(),
+            K=self.base_network.K.copy(),
+            D=self.base_network.D.copy(),
+            nodes=self.base_network.nodes,
+            meta=self.base_network.meta
+        )
         active_codes, events = set(), []
         S_list: List[float] = [0.0]
 
@@ -179,6 +190,16 @@ class MonteCarloGenerator:
         return Scenario(
             scenario_id, net, events, sum(S_list), (self.seed or 0) + scenario_id
         )
+
+    def _simulate_events_only(self) -> List[IncidentDefinition]:
+        active_codes, triggered = set(), []
+        for level in [Category.SYSTEMIC, Category.TACTICAL, Category.MICRO]:
+            for inc in self.manifest.get_incidents_by_level(level):
+                p_eff = inc.effective_probability(list(active_codes))
+                if random.random() < p_eff:
+                    active_codes.add(inc.code)
+                    triggered.append(inc)
+        return triggered
 
     def _get_target_indices(self, net: NetworkSnapshot,
                             inc: IncidentDefinition) -> List[int]:
@@ -220,10 +241,43 @@ class MonteCarloEngine:
 
             # Lógica de convergencia...
             if i >= window * 2 and i % window == 0:
-                if self._ha_convergido(history, window, e_limit):
-                    print(f"✓ Convergencia alcanzada en {i} iteraciones.")
+                if self._ha_convergido(history, window, eps=e_limit):
+                    print(f"[OK] Convergencia alcanzada en {i} iteraciones.")
                     break
         return results
+
+    def run_by_zone(self, zone_event_map: Dict[str, List[str]], e_limit=0.001, window=100, max_iter=5000) -> Dict[str, float]:
+        """
+        No muta matrices. Calcula el stress escalar por zona y escenario.
+        zone_event_map: dict {h3_res4: [code1, code2...]}
+        Retorna: dict {h3_res4: avg_stress}
+        """
+        history = {z: [] for z in zone_event_map.keys()}
+        
+        for i in range(1, max_iter + 1):
+            active_events = self.generator._simulate_events_only()
+            
+            for z, valid_codes in zone_event_map.items():
+                cap = 1.0
+                for inc in active_events:
+                    if inc.code in valid_codes:
+                        if inc.structural_effects.adjacency.action == AdjacencyAction.DISABLE:
+                            cap *= 0.0
+                        else:
+                            cap *= inc.structural_effects.capacity.modifier
+                history[z].append(cap)
+                
+            if i >= window * 2 and i % window == 0:
+                all_converged = True
+                for z in zone_event_map.keys():
+                    if not self._ha_convergido(history[z], window, eps=e_limit):
+                        all_converged = False
+                        break
+                if all_converged:
+                    print(f"[OK] Convergencia zonal alcanzada en {i} iteraciones.")
+                    break
+                    
+        return {z: float(1.0 - np.mean(history[z])) for z in zone_event_map.keys()}
 
     def _ha_convergido(self, h, w, eps):
         prev, curr = h[-w * 2: -w], h[-w:]

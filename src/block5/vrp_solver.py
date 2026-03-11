@@ -1,8 +1,10 @@
 # src/block5/vrp_solver.py
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict
 import logging
+import numpy as np
+from src.block5.cost_matrix_builder import UNREACHABLE_PENALTY
 
 logger = logging.getLogger("VRP_Solver")
 
@@ -11,12 +13,23 @@ def solve_vrp(
     vehicle_capacities: List[float],
     demands: List[float],
     num_vehicles: int,
-    time_limit_seconds: int = 10
-) -> Optional[List[List[int]]]:
+    time_limit_seconds: int = 10,
+    time_matrix: Optional[List[List[int]]] = None,
+    time_windows: Optional[List[Tuple[int, int]]] = None,
+    service_times: Optional[List[int]] = None,
+    max_shift_minutes_per_vehicle: Optional[List[int]] = None
+) -> Optional[Tuple[List[List[int]], List[List[Dict]]]]:
     """
-    Solves the Capacitated Vehicle Routing Problem (CVRP) using OR-Tools.
-    Returns a list of routes (each route containing matrix node indices)
-    for each vehicle.
+    Retorna (routes, schedules).
+    routes: lista de rutas por vehículo (índices de nodos).
+    schedules: lista de cronogramas por vehículo.
+      Cada cronograma es una lista de dicts por parada:
+      {
+        "node_index": int,
+        "earliest_arrival_min": int,
+        "latest_arrival_min": int,
+        "suggested_arrival_min": int  # = earliest (OR-Tools optimiza hacia mínimo)
+      }
     """
     logger.info(f"OR-Tools invoked with {len(cost_matrix)} matrix size, {num_vehicles} vehicles.")
     
@@ -36,6 +49,54 @@ def solve_vrp(
 
     transit_callback_index = routing.RegisterTransitCallback(distance_callback)
     routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+
+    # --- CVRPTW: activación condicional ---
+    has_service_times = (
+        service_times is not None and
+        any(st > 0 for st in service_times)
+    )
+    has_shift_limits = (
+        max_shift_minutes_per_vehicle is not None and
+        any(limit < 1440 for limit in max_shift_minutes_per_vehicle)
+    )
+    needs_time_dimension = (
+        time_windows is not None and
+        time_matrix is not None and
+        any(tw != (0, 1440) for tw in time_windows)
+    ) or has_service_times or has_shift_limits
+
+    if needs_time_dimension and time_matrix is not None:
+        def time_callback(from_index: int, to_index: int) -> int:
+            from_node = manager.IndexToNode(from_index)
+            to_node = manager.IndexToNode(to_index)
+            transit = time_matrix[from_node][to_node]
+            service = service_times[from_node] if service_times and from_node < len(service_times) else 0
+            return transit + service
+
+        transit_time_idx = routing.RegisterTransitCallback(time_callback)
+        routing.AddDimension(
+            transit_time_idx,
+            1400,   # slack
+            1440,  # horizonte: 24h
+            False, # salida óptima
+            "Time"
+        )
+        time_dimension = routing.GetDimensionOrDie("Time")
+
+        if time_windows:
+            for node_idx, (tw_start, tw_end) in enumerate(time_windows):
+                if tw_start == 0 and tw_end == 1440:
+                    continue  # ventana abierta, sin restricción
+                index = manager.NodeToIndex(node_idx)
+                if index >= 0:
+                    time_dimension.CumulVar(index).SetRange(tw_start, tw_end)
+                    
+        # Límite de jornada por vehículo
+        if max_shift_minutes_per_vehicle:
+            for vehicle_id in range(num_vehicles):
+                max_shift = max_shift_minutes_per_vehicle[vehicle_id] if vehicle_id < len(max_shift_minutes_per_vehicle) else 480
+                end_index = routing.End(vehicle_id)
+                time_dimension.CumulVar(end_index).SetMax(max_shift)
     
     # Capacity Variables Callback (scaled to integers)
     int_demands = [int(v * 1000) for v in demands]
@@ -55,7 +116,10 @@ def solve_vrp(
     )
 
     # Disjunctions for dropping unroutable nodes
-    penalty = 999999998
+    cost_array = np.array(cost_matrix)
+    real_costs = cost_array[cost_array < UNREACHABLE_PENALTY]
+    max_real_cost = int(real_costs.max()) if real_costs.size > 0 else 10**6
+    penalty = max_real_cost * 3
     for node in range(num_vehicles, len(cost_matrix)):
         routing.AddDisjunction([manager.NodeToIndex(node)], penalty)
 
@@ -84,14 +148,40 @@ def solve_vrp(
 
     # Parse solutions
     routes = []
+    schedules = []
+    
     for vehicle_id in range(num_vehicles):
         index = routing.Start(vehicle_id)
         route = []
+        schedule = []
+        
         while not routing.IsEnd(index):
             node_index = manager.IndexToNode(index)
             route.append(node_index)
+            
+            # Extraer cronograma si existe dimensión Time
+            if needs_time_dimension:
+                cumul_var = time_dimension.CumulVar(index)
+                earliest = solution.Min(cumul_var)
+                latest = solution.Max(cumul_var)
+                schedule.append({
+                    "node_index": node_index,
+                    "earliest_arrival_min": earliest,
+                    "latest_arrival_min": latest,
+                    "suggested_arrival_min": earliest
+                })
+            else:
+                # Sin ventanas: calcular tiempo acumulado desde time_matrix
+                schedule.append({
+                    "node_index": node_index,
+                    "earliest_arrival_min": None,
+                    "latest_arrival_min": None,
+                    "suggested_arrival_min": None
+                })
+            
             index = solution.Value(routing.NextVar(index))
-        # Optional: route.append(manager.IndexToNode(index)) to display closure
+        
         routes.append(route)
-
-    return routes
+        schedules.append(schedule)
+    
+    return routes, schedules
