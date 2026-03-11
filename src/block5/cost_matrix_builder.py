@@ -112,7 +112,8 @@ def build_dense_cost_matrix(
     departure_hour: int = 12,
     speed_profiles: dict = None,
     precomputed_time_matrix: List[List[int]] = None,
-    node_filter: set = None
+    node_filter: set = None,
+    fallback_counter: list = None
 ) -> Tuple[List[List[int]], List[List[int]]]:
     """
     Retorna (cost_matrix, time_matrix).
@@ -130,7 +131,8 @@ def build_dense_cost_matrix(
     weight_fn = get_weight_function(
         archetype, cost_env, threat_matrix, judge,
         osm_to_rx, departure_hour, speed_profiles,
-        node_filter=node_filter
+        node_filter=node_filter,
+        fallback_counter=fallback_counter
     )
     # Solo instanciar time_fn si vamos a usarlo
     time_fn = _get_time_weight_fn(cost_env, departure_hour, speed_profiles, osm_to_rx, node_filter) if precomputed_time_matrix is None else None

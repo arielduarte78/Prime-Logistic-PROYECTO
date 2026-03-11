@@ -33,6 +33,7 @@ class EdgePayload:
     highway: str = "unclassified"
     h3_index: str = ""
     name: str = ""
+    ref: str = ""
 
 # ====================================================================
 # Graph Instantiation Engine
@@ -127,7 +128,8 @@ def build_directed_graph(
                 length=length_val,
                 highway=highway_str,
                 h3_index=str(row.h3_index_origin) if "h3_index_origin" in df_edges.columns else "",
-                name=name_str
+                name=name_str,
+                ref=str(row.ref) if "ref" in df_edges.columns and pd.notna(row.ref) else ""
             )
             
             # Inject into the C/Rust engine
