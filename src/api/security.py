@@ -88,3 +88,11 @@ def _check_rate_limit(api_key: str, max_requests: int, window_seconds: int = 60)
     _rate_limit_state[api_key].append(current_time)
 
 # Rate limiting handled by slowapi in main.py
+
+def rate_limit_route(api_key: str) -> None:
+    """10 requests per minute for /route endpoint."""
+    _check_rate_limit(api_key, max_requests=10, window_seconds=60)
+
+def rate_limit_fleet(api_key: str) -> None:
+    """5 requests per minute for /fleet endpoint."""
+    _check_rate_limit(api_key, max_requests=5, window_seconds=60)
