@@ -15,7 +15,7 @@ export async function sendFleetRequest(payload) {
   let response;
 
   // 2. Construimos la URL completa (ej: https://aphira-abbey.hf.space/fleet)
-  const fullUrl = `${API_URL}/fleet`;
+  const fullUrl = `${API_URL}/fleet/`;
 
   try {
     response = await fetch(fullUrl, {
