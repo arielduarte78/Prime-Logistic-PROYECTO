@@ -1,7 +1,9 @@
-/**prime-frontend/src/services/fleetApi.js */
 /**
- * POST /fleet — sends parsed Excel data to the Prime Logistics Engine backend.
+ * POST /fleet — envía los datos procesados del Excel al backend en Hugging Face.
  */
+
+// 1. Capturamos la URL del backend desde las variables de entorno de Vercel
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 const ERROR_MESSAGES = {
   400: 'Las coordenadas están fuera del área de cobertura (Buenos Aires y alrededores).',
@@ -11,23 +13,29 @@ const ERROR_MESSAGES = {
 
 export async function sendFleetRequest(payload) {
   let response;
+
+  // 2. Construimos la URL completa (ej: https://aphira-abbey.hf.space/fleet)
+  const fullUrl = `${API_URL}/fleet`;
+
   try {
-    response = await fetch('/fleet', {
+    response = await fetch(fullUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': import.meta.env.VITE_API_KEY || 'dev_key_123',
+        // Usamos la API Key configurada en Vercel o la de desarrollo
+        'x-api-key': import.meta.env.VITE_API_KEY || 'messiycr7',
       },
       body: JSON.stringify(payload),
     });
   } catch (err) {
-    throw new Error('No se puede conectar con el servidor. Verificá que el backend esté corriendo.');
+    console.error("Error de conexión:", err);
+    throw new Error('No se puede conectar con el servidor de Hugging Face. Verificá que el backend esté en estado "Running".');
   }
 
   if (!response.ok) {
     const msg = ERROR_MESSAGES[response.status]
       || (response.status >= 500
-        ? 'Error en el servidor. Intentá nuevamente.'
+        ? 'Error en el servidor de logística. Intentá nuevamente.'
         : `Error inesperado (${response.status}).`);
     throw new Error(msg);
   }
