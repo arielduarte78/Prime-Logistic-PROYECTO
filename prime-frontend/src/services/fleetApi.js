@@ -14,7 +14,7 @@ const ERROR_MESSAGES = {
 
 export async function sendFleetRequest(payload) {
   let response;
-  const fullUrl = `${BASE_URL}/fleet`;
+  const fullUrl = '/api/fleet';
 
   try {
     response = await fetch(fullUrl, {
