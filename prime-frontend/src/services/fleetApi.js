@@ -2,8 +2,9 @@
  * POST /fleet — envía los datos procesados del Excel al backend en Hugging Face.
  */
 
-// 1. Capturamos la URL del backend desde las variables de entorno de Vercel
-const API_URL = import.meta.env.VITE_API_URL || '';
+// 1. Capturamos y sanitizamos la URL del backend
+const BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+const API_KEY = import.meta.env.VITE_API_KEY || 'messiycr7';
 
 const ERROR_MESSAGES = {
   400: 'Las coordenadas están fuera del área de cobertura (Buenos Aires y alrededores).',
@@ -13,17 +14,14 @@ const ERROR_MESSAGES = {
 
 export async function sendFleetRequest(payload) {
   let response;
-
-  // 2. Construimos la URL completa (ej: https://aphira-abbey.hf.space/fleet)
-  const fullUrl = `${API_URL}/fleet`;
+  const fullUrl = `${BASE_URL}/fleet`;
 
   try {
     response = await fetch(fullUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // Usamos la API Key configurada en Vercel o la de desarrollo
-        'x-api-key': import.meta.env.VITE_API_KEY || 'messiycr7',
+        'x-api-key': API_KEY,
       },
       body: JSON.stringify(payload),
     });
@@ -33,11 +31,23 @@ export async function sendFleetRequest(payload) {
   }
 
   if (!response.ok) {
+    let deepError = '';
+    try {
+      const errorData = await response.json();
+      deepError = errorData.detail || JSON.stringify(errorData);
+      console.error("Deep backend error:", deepError);
+    } catch (e) {
+      deepError = 'No se pudo parsear el error del backend.';
+    }
+
     const msg = ERROR_MESSAGES[response.status]
       || (response.status >= 500
         ? 'Error en el servidor de logística. Intentá nuevamente.'
-        : `Error inesperado (${response.status}).`);
-    throw new Error(msg);
+        : `Error inesperado (${response.status}): ${deepError}`);
+    
+    const finalError = new Error(msg);
+    finalError.detail = deepError;
+    throw finalError;
   }
 
   return response.json();
