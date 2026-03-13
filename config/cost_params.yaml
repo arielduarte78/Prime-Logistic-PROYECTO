@@ -2,18 +2,18 @@
 # Calibrado con datos reales - AMBA (Marzo 2026)
 
 costos:
-  c_km_ars: 1287.67
-  c_hora_ars: 23017.50
-  franquicia_seguro_usd: 100000.0
-  dolar_mep_ars: 1434.11
-  velocidad_comercial_kmh: 20.0
+  c_km_ars: 807.85
+  c_hora_ars: 19130.79
+  franquicia_seguro_usd: 80000.0
+  dolar_mep_ars: 1415.52
+  velocidad_comercial_kmh: 22.0
 
 peajes:
-  ausa_25_mayo_ars: 29780.02
-  ausa_paseo_bajo_ars: 10203.02
-  acceso_norte_oeste_ars: 10287.64
-  aubasa_sur_ars: 16200.00
-  promedio_ars: 15500.0
+  ausa_25_mayo_ars: 6305.34      # Base no-pico
+  ausa_paseo_bajo_ars: 954.0
+  acceso_norte_oeste_ars: 994.0  # Base no-pico
+  aubasa_sur_ars: 6305.34        # Asumimos similar a 25 Mayo para camión 2 ejes
+  promedio_ars: 6000.0
 
 custodia:
-  tarifa_hora_ars: 55000.0
+  tarifa_hora_ars: 5000.0        # Ajustado según telemetría/vigilancia

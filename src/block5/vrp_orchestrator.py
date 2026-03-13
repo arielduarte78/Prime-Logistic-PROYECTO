@@ -68,7 +68,8 @@ def _compute_archetype_plan(
     departure_hour: int,
     speed_profiles: dict,
     p2_subgraph_nodes: set,
-    shift_start_minutes: int = 480
+    shift_start_minutes: int = 480,
+    departure_time: str = None
 ) -> tuple:
     """
     Función sincrónica pura para un arquetipo.
@@ -435,11 +436,153 @@ def _compute_archetype_plan(
             "total_w_survival": round(total_w_survival, 4),
             "avg_confidence": avg_confidence,
             "legs_evaluated": arch_legs
+        },
+        "topology_visuals": {
+            "toll_markers": _detect_toll_crossings(nodes_of_interest, plan, base_graph, client_cost_env, departure_time),
+            "risk_polygons": _get_h3_polygons(p2_subgraph_nodes, threat_matrix)
         }
-
     }
 
+    # Fracture 5: Build detailed cost breakdown for each assignment
+    for a_plan in plan:
+        # We need the full path of nodes for distance/tolls
+        # r_indices contains the RX indices of the route
+        path_nodes = a_plan["route_indices"]
+        a_plan["cost_breakdown"] = _calculate_cost_breakdown(
+            path_nodes, 
+            a_plan["schedule"], 
+            base_graph, 
+            client_cost_env,
+            departure_time or f"{shift_start_minutes//60:02d}:{shift_start_minutes%60:02d}"
+        )
+
     return archetype, plan_dict, legs_count, fallback_counter[0]
+
+def _haversine_path_km(path_rx, base_graph) -> float:
+    total_km = 0.0
+    for i in range(len(path_rx) - 1):
+        u_node = base_graph[path_rx[i]]
+        v_node = base_graph[path_rx[i+1]]
+        # Simple haversine-like distance
+        phi1, lam1 = math.radians(u_node.lat), math.radians(u_node.lon)
+        phi2, lam2 = math.radians(v_node.lat), math.radians(v_node.lon)
+        dphi = phi2 - phi1
+        dlam = lam2 - lam1
+        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        total_km += 6371.0 * c
+    return total_km
+
+def _detect_toll_crossings(nodes_of_interest, plan, base_graph, cost_env, departure_time) -> list:
+    markers = []
+    # Identify unique toll edge crossings in the final routes
+    for a_plan in plan:
+        path_rx = a_plan.get("route_indices", [])
+        for i in range(len(path_rx) - 1):
+            u_idx, v_idx = path_rx[i], path_rx[i+1]
+            try:
+                # get_edge_data returns the EdgePayload
+                edge_payload = base_graph.get_edge_data(u_idx, v_idx)
+                if not edge_payload: continue
+                
+                name_upper = edge_payload.name.upper() if getattr(edge_payload, 'name', None) else ""
+                is_toll = False
+                toll_name = ""
+                
+                if "25 DE MAYO" in name_upper:
+                    is_toll, toll_name = True, "Peaje AUSA 25 de Mayo"
+                elif "PERITO MORENO" in name_upper:
+                    is_toll, toll_name = True, "Peaje AUSA Perito Moreno"
+                elif "ILLIA" in name_upper:
+                    is_toll, toll_name = True, "Peaje AUSA Illia"
+                elif "ACCESO NORTE" in name_upper or "PANAMERICANA" in name_upper:
+                    is_toll, toll_name = True, "Peaje Acceso Norte"
+                elif "ACCESO OESTE" in name_upper:
+                    is_toll, toll_name = True, "Peaje Acceso Oeste"
+                
+                if is_toll:
+                    u_node = base_graph[u_idx]
+                    markers.append({
+                        "lat": u_node.lat,
+                        "lon": u_node.lon,
+                        "name": toll_name,
+                        "vehicle_id": a_plan["vehicle"].id
+                    })
+            except:
+                continue
+    return markers
+
+def _get_h3_polygons(node_set, threat_matrix) -> list:
+    import h3
+    polygons = []
+    # Collect all unique H3 cells in the filtered subgraph
+    seen_h3 = set()
+    # In this context, we check the threat_matrix for high risk areas
+    for h3_idx, mu in threat_matrix.items():
+        if mu > 1.1: # High risk threshold
+            # Get boundary coordinates for the H3 cell
+            try:
+                # h3.cell_to_boundary returns lat-lon tuples
+                boundary = h3.cell_to_boundary(h3_idx)
+                polygons.append({
+                    "h3_index": h3_idx,
+                    "intensity": mu,
+                    "boundary": [[lat, lon] for lat, lon in boundary]
+                })
+            except:
+                continue
+    return polygons
+
+def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_time_str) -> dict:
+    from src.api.schemas import CostBreakdown
+    
+    # Defaults de Ecuación de Colapso (Launch Plan 2.0)
+    gasoil = getattr(cost_env, "precio_gasoil_ars", 1865.0)
+    l_por_km = getattr(cost_env, "consumo_l_por_km", 0.33)
+    dolar_mep = getattr(cost_env, "dolar_mep_ars", 1415.52)
+    viatico = 15671.16
+
+    dist_km = _haversine_path_km(path_nodes, base_graph)
+    
+    # OPEX Variable (CKM)
+    comb = dist_km * l_por_km * gasoil
+    neum = dist_km * 57.00
+    mant = dist_km * 135.40
+    
+    # OPEX Fijo (CH)
+    # Duración total desde el primer al último punto del schedule
+    if schedule and len(schedule) >= 2:
+        dur_min = (schedule[-1]["suggested_arrival_min"] or 0) - (schedule[0]["suggested_arrival_min"] or 0)
+    else:
+        dur_min = 0
+    dur_hr = max(dur_min, 0) / 60.0
+    
+    lab = dur_hr * 12140.27
+    amort = dur_hr * 4234.84
+    seg = dur_hr * 1818.18
+    tele = dur_hr * 937.50
+
+    # Peajes
+    peajes = _detect_toll_crossings(path_nodes, schedule, base_graph, cost_env, start_time_str)
+    costo_peajes = sum(p.get("costo_ars", 0) for p in peajes)
+
+    total = comb + neum + mant + lab + amort + seg + tele + costo_peajes + viatico
+    
+    return CostBreakdown(
+        distancia_km=round(dist_km, 2),
+        consumo_litros=round(dist_km * l_por_km, 2),
+        costo_combustible_ars=round(comb, 2),
+        costo_neumaticos_ars=round(neum, 2),
+        costo_mantenimiento_ars=round(mant, 2),
+        duracion_horas=round(dur_hr, 2),
+        costo_laboral_hora=12140.27,
+        costo_amort_hora=4234.84,
+        costo_seguros_hora=1818.18,
+        costo_telemetria_hora=937.50,
+        costo_peajes_ars=round(costo_peajes, 2),
+        costo_total_ars=round(total, 2),
+        costo_total_usd=round(total / dolar_mep, 2)
+    ).model_dump()
 
 
 
@@ -777,7 +920,8 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
             departure_hour,
             speed_profiles,
             p2_subgraph_nodes,
-            payload.shift_start_minutes
+            payload.shift_start_minutes,
+            payload.departure_time
         )
         for archetype in available_archetypes
     ]

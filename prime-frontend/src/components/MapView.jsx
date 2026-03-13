@@ -1,6 +1,6 @@
 //prime-frontend/src/components/MapView.jsx
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import { MAP_CONFIG } from '../constants/mapConfig';
 import { ARCHETYPES } from '../constants/archetypes';
@@ -38,6 +38,12 @@ const animatingTruckIcon = (vehicleId, color) => L.divIcon({
   className: '',
   html: `<div style="background:${color};color:white;padding:5px 10px;border-radius:10px;font-size:11px;font-weight:800;font-family:Inter,sans-serif;box-shadow:0 4px 15px ${color}80;border:2px solid white;white-space:nowrap;">🚛 ${vehicleId}</div>`,
   iconAnchor: [40, 16],
+});
+
+const tollIcon = L.divIcon({
+  className: '',
+  html: `<div style="background:#0F172A;color:white;width:24px;height:24px;border-radius:6px;font-size:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);border:2px solid #3B82F6;">🛣️</div>`,
+  iconAnchor: [12, 12],
 });
 
 export default function MapView({ fleetResponse, selectedArchetype, parsedPayload, onChangeArchetype, onBack }) {
@@ -297,6 +303,39 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                 </Marker>
               );
             })}
+
+            {/* Toll markers */}
+            {(plans[selectedArchetype]?.topology_visuals?.toll_markers || []).map((toll, idx) => (
+              <Marker key={`toll-${idx}`} position={[toll.lat, toll.lon]} icon={tollIcon}>
+                <Popup>
+                  <div className="text-xs font-bold text-slate-800">{toll.name}</div>
+                  <div className="text-[10px] text-slate-500 uppercase font-mono mt-1">Detectado para {toll.vehicle_id}</div>
+                </Popup>
+              </Marker>
+            ))}
+
+            {/* H3 Risk Polygons */}
+            {(plans[selectedArchetype]?.topology_visuals?.risk_polygons || []).map((poly, idx) => (
+              <Polygon 
+                key={`h3-${idx}`} 
+                positions={poly.boundary}
+                pathOptions={{
+                  fillColor: '#EF4444',
+                  fillOpacity: Math.min((poly.intensity - 1.0) * 0.8, 0.6),
+                  color: '#B91C1C',
+                  weight: 1,
+                  dashArray: '3, 5'
+                }}
+              >
+                <Popup>
+                   <div className="text-xs font-bold text-red-700">Zona de Riesgo (H3)</div>
+                   <div className="text-[10px] text-slate-600 mt-1 italic leading-tight">
+                     Índice: {poly.h3_index}<br/>
+                     Intensidad de Amenaza: {poly.intensity.toFixed(2)}x
+                   </div>
+                </Popup>
+              </Polygon>
+            ))}
 
             {/* Animated trucks */}
             {Object.entries(simPositions).map(([vehicleId, { pos, color }]) => (

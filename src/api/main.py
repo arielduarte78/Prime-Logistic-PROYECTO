@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, Depends, BackgroundTasks, Security
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 
 # Cargar variables de entorno al inicio
@@ -133,11 +136,20 @@ async def lifespan(app: FastAPI):
 
 from fastapi.middleware.cors import CORSMiddleware
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(lifespan=lifespan, title="Prime Logistics Engine V1.4")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+ALLOWED_ORIGINS_REGEX = (
+    r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
+    r"|https://.*\.vercel\.app"
+    r"|https://.*\.hf\.space"
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origin_regex=ALLOWED_ORIGINS_REGEX,
     allow_credentials=True,
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key"],
@@ -212,7 +224,8 @@ def _write_audit_log(
     except Exception as e:
         logger.error(f"Audit log write failed: {e}")
 
-@app.post('/fleet', response_model=FleetResponse, dependencies=[Depends(rate_limit_fleet)])
+@app.post('/fleet', response_model=FleetResponse)
+@limiter.limit("10/minute;100/hour")
 async def fleet_endpoint(
     payload: FleetRequest, 
     request: Request,
@@ -250,7 +263,8 @@ async def fleet_endpoint(
     finally:
         semaphore.release()
 
-@app.post('/route', response_model=RouteResponse, dependencies=[Depends(rate_limit_route)])
+@app.post('/route', response_model=RouteResponse)
+@limiter.limit("10/minute;100/hour")
 async def calculate_route(
     payload: RouteRequest, 
     request: Request,
@@ -453,3 +467,14 @@ async def calculate_route(
         except NameError:
             pass
         semaphore.release()
+
+@app.get("/health")
+async def health():
+    graph_ok = hasattr(app.state, "base_graph") and app.state.base_graph is not None
+    return {
+        "status": "ok" if graph_ok else "loading",
+        "graph_nodes": len(app.state.rx_to_osm) if graph_ok else 0,
+        "version": "Abbey 1.5",
+        "ckm_ars": 807.85,
+        "ch_ars": 19130.79
+    }

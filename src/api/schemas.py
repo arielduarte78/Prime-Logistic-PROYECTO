@@ -51,6 +51,36 @@ class RouteRequest(BaseModel):
     stochastic_mode: bool = False
     economic_profile: Optional[EconomicProfile] = None
 
+class CostBreakdown(BaseModel):
+    # Componentes de CKM
+    distancia_km: float
+    consumo_litros: float
+    precio_gasoil_ars: float = 1865.0     # Ponderado Puma+Axion Mar 2026
+    consumo_l_por_km: float = 0.33        # Stop-and-go AMBA camión 15t
+    costo_combustible_ars: float
+    costo_neumaticos_ars: float
+    costo_mantenimiento_ars: float
+    ckm_total_ars: float = 807.85          # Costo por km total
+
+    # Componentes de CH
+    duracion_horas: float
+    costo_laboral_hora: float = 12140.27  # CCT 40/89 Mar 2026
+    costo_amort_hora: float = 4234.84     # CAPEX Atego 1721
+    costo_seguros_hora: float = 1818.18   # SSN Ene 2026 + patentes
+    costo_telemetria_hora: float = 937.50  # GPS+ADAS+vigilancia
+    ch_total_ars: float = 19130.79         # Costo por hora total
+
+    # Peajes dinámicos (TDVRP)
+    peajes_cruzados: List[Dict[str, Any]] = []
+    costo_peajes_ars: float
+    viatico_ars: float = 15671.16
+
+    # Totales
+    costo_total_ars: float
+    costo_total_usd: float
+    dolar_mep: float = 1415.52             # MEP 13 Mar 2026
+    fuente_precios: str = "FADEEAC/AUSA/CCT40-89 Mar 2026"
+
 class ParetoResult(BaseModel):
     archetype: str
     w_survival: float
@@ -58,6 +88,7 @@ class ParetoResult(BaseModel):
     route_nodes: List[int]
     route_coordinates: List[List[float]] = []
     confidence: float
+    cost_breakdown: Optional[CostBreakdown] = None
 
 class RouteResponse(BaseModel):
     processing_time_ms: float

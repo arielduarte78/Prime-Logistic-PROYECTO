@@ -6,7 +6,9 @@ import LoadingState from '../components/LoadingState';
 import ChatResult from '../components/ChatResult';
 import MapView from '../components/MapView';
 import ErrorState from '../components/ErrorState';
+import AdvancedConfig from '../components/AdvancedConfig';
 import { sendFleetRequest } from '../services/fleetApi';
+import { supabase } from '../services/supabaseClient';
 
 export default function AppPage() {
   const { user, signOut } = useAuth();
@@ -16,15 +18,48 @@ export default function AppPage() {
   const [errorMessage, setErrorMessage] = useState('');
   const [parsedPayload, setParsedPayload] = useState(null);
   const [loadingStart, setLoadingStart] = useState(null);
+  const [advConfig, setAdvConfig] = useState(null);
 
   const handleParsed = async (payload) => {
-    setParsedPayload(payload);
+    const finalPayload = {
+      ...payload,
+      departure_time: advConfig?.departure_time,
+      stochastic_mode: advConfig?.stochastic_mode || false,
+      economic_profile: {
+        precio_gasoil_ars: advConfig?.precio_gasoil_ars,
+        tarifa_hora_ars: advConfig?.tarifa_hora_ars,
+        consumo_l_por_km: advConfig?.consumo_l_por_km,
+        dolar_mep_ars: advConfig?.dolar_mep,
+        factor_friccion: advConfig?.factor_friccion
+      }
+    };
+
+    setParsedPayload(finalPayload);
     setAppState('loading');
     setLoadingStart(Date.now());
     try {
-      const response = await sendFleetRequest(payload);
+      const response = await sendFleetRequest(finalPayload);
       setFleetResponse(response);
       setAppState('result');
+
+      // M4: Guardar en Historial (Supabase)
+      if (user) {
+        const firstPlan = Object.values(response.plans || {})[0] || {};
+        const summary = firstPlan.plan_financial_summary || {};
+        
+        await supabase.from('consultas').insert({
+          user_id: user.id,
+          n_vehiculos: finalPayload.vehicles.length,
+          n_destinos: finalPayload.destinations.length,
+          archetypes: finalPayload.allowed_archetypes,
+          response_json: response,
+          shift_start_minutes: finalPayload.shift_start_minutes,
+          departure_time: finalPayload.departure_time,
+          costo_total_ars: summary.total_expected_cost || 0,
+          distancia_km: firstPlan.assignments?.[0]?.cost_breakdown?.distancia_km || 0
+        });
+      }
+
     } catch (err) {
       setErrorMessage(err.message);
       setAppState('error');
@@ -53,7 +88,12 @@ export default function AppPage() {
         </header>
       )}
 
-      {appState === 'idle' && <ExcelUploader onParsed={handleParsed} />}
+      {appState === 'idle' && (
+        <div className="flex flex-col gap-4">
+          <AdvancedConfig onChange={setAdvConfig} />
+          <ExcelUploader onParsed={handleParsed} />
+        </div>
+      )}
       {appState === 'loading' && <LoadingState startTime={loadingStart} />}
       {appState === 'result' && (
         <ChatResult fleetResponse={fleetResponse} parsedPayload={parsedPayload} onSelectArchetype={handleSelectArchetype} />

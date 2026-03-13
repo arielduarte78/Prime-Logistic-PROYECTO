@@ -87,12 +87,4 @@ def _check_rate_limit(api_key: str, max_requests: int, window_seconds: int = 60)
     # Register the new request
     _rate_limit_state[api_key].append(current_time)
 
-async def rate_limit_route(api_key: str = Security(verify_api_key)):
-    """Rate limiter for /route endpoint: 30 req/min"""
-    _check_rate_limit(api_key, max_requests=30, window_seconds=60)
-    return api_key
-
-async def rate_limit_fleet(api_key: str = Security(verify_api_key)):
-    """Rate limiter for /fleet endpoint: 5 req/min"""
-    _check_rate_limit(api_key, max_requests=5, window_seconds=60)
-    return api_key
+# Rate limiting handled by slowapi in main.py

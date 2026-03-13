@@ -165,7 +165,7 @@ def build_dense_cost_matrix(
             else:
                 raw_cost = shortest_costs[dest_node] if dest_node in shortest_costs else math.inf
                 cost_row.append(
-                    int(round(raw_cost)) if math.isfinite(raw_cost) else UNREACHABLE_PENALTY
+                    int(round(raw_cost * 100)) if math.isfinite(raw_cost) else UNREACHABLE_PENALTY
                 )
                 if precomputed_time_matrix is not None:
                     time_row.append(precomputed_time_matrix[i][j])
