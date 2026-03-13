@@ -73,6 +73,7 @@ class FleetRequest(BaseModel):
     departure_time: Optional[str] = Field(None, max_length=30)
     stochastic_mode: bool = False
     economic_profile: Optional[EconomicProfile] = None
+    shift_start_minutes: int = Field(default=480, ge=0, le=1440)
 
 class FleetResponse(BaseModel):
     subgraph_edges: int

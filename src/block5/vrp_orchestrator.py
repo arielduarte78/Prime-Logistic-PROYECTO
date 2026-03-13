@@ -67,7 +67,8 @@ def _compute_archetype_plan(
     spatial_rx_indices,
     departure_hour: int,
     speed_profiles: dict,
-    p2_subgraph_nodes: set
+    p2_subgraph_nodes: set,
+    shift_start_minutes: int = 480
 ) -> tuple:
     """
     Función sincrónica pura para un arquetipo.
@@ -150,6 +151,7 @@ def _compute_archetype_plan(
         v_destinations = []
 
         v_schedule = []
+        last_arrival_min = 0
 
         for step_idx, node_idx in enumerate(route):
 
@@ -166,23 +168,46 @@ def _compute_archetype_plan(
                 if step_idx < len(schedule):
 
                     smin = schedule[step_idx]["suggested_arrival_min"]
+                    # Fracture 1: apply shift offset
+                    abs_min = (smin + shift_start_minutes) if smin is not None else None
 
                     v_schedule.append({
 
                         "destination_id": dest.id,
 
-                        "suggested_arrival_min": smin,
+                        "suggested_arrival_min": abs_min,
 
-                        "earliest_arrival_min": schedule[step_idx]["earliest_arrival_min"],
+                        "earliest_arrival_min": (schedule[step_idx]["earliest_arrival_min"] + shift_start_minutes) if schedule[step_idx]["earliest_arrival_min"] is not None else None,
 
-                        "latest_arrival_min": schedule[step_idx]["latest_arrival_min"],
+                        "latest_arrival_min": (schedule[step_idx]["latest_arrival_min"] + shift_start_minutes) if schedule[step_idx]["latest_arrival_min"] is not None else None,
 
                         "suggested_arrival_hhmm": (
 
-                            f"{smin // 60:02d}:{smin % 60:02d}" if smin is not None else None
+                            f"{abs_min // 60:02d}:{abs_min % 60:02d}" if abs_min is not None else None
 
                         )
 
+                    })
+                    if smin is not None:
+                        last_arrival_min = smin
+
+        # Fracture 2: return-to-base
+        if v_destinations and len(route) >= 2:
+            last_node_idx = route[-2] if route[-1] < V_rx_count else route[-1]
+            depot_idx = v_idx  # vehicle's own depot
+            if last_node_idx < len(shared_time_matrix) and depot_idx < len(shared_time_matrix[last_node_idx]):
+                return_travel = shared_time_matrix[last_node_idx][depot_idx]
+                if return_travel is not None and return_travel < 99999:
+                    last_dest_service = int(v_destinations[-1].service_time_min) if v_destinations else 0
+                    return_min = last_arrival_min + last_dest_service + int(return_travel)
+                    abs_return = return_min + shift_start_minutes
+                    v_schedule.append({
+                        "destination_id": "__RETURN_BASE__",
+                        "is_return": True,
+                        "suggested_arrival_min": abs_return,
+                        "earliest_arrival_min": None,
+                        "latest_arrival_min": None,
+                        "suggested_arrival_hhmm": f"{abs_return // 60:02d}:{abs_return % 60:02d}"
                     })
 
         plan.append({
@@ -360,6 +385,37 @@ def _compute_archetype_plan(
 
 
 
+    # Fracture 3: aggregate costs and reasoning from Pareto segments
+    total_w_survival = 0.0
+    total_w_cost = 0.0
+    total_confidence = 0.0
+    arch_legs = 0
+    for leg in legs_evaluations:
+        for sol in leg.get("pareto_solutions", []):
+            if hasattr(sol, 'archetype') and sol.archetype == archetype:
+                total_w_survival += sol.w_survival
+                total_w_cost += sol.w_expected_cost
+                total_confidence += sol.confidence
+                arch_legs += 1
+
+    avg_confidence = round(total_confidence / arch_legs, 1) if arch_legs > 0 else 0.0
+
+    reasoning_log = (
+        f"Arquetipo '{archetype}': evaluados {arch_legs} tramos. "
+        f"Costo total ponderado: {total_w_cost:.2f} ARS. "
+        f"Riesgo acumulado (w_survival): {total_w_survival:.4f}. "
+        f"Confianza promedio: {avg_confidence}%. "
+        f"Phase2: {p2_time*1000:.0f}ms, Phase3: {p3_time*1000:.0f}ms."
+    )
+
+    # Per-assignment financial metrics
+    for v_plan in plan:
+        n_dests = len(v_plan.get("route_destinations", []))
+        v_plan["financial_metrics"] = {
+            "assigned_destinations": n_dests,
+            "estimated_cost_share": round(total_w_cost / max(len(plan), 1), 2),
+        }
+
     plan_dict = {
 
         "assignments": plan,
@@ -372,6 +428,13 @@ def _compute_archetype_plan(
             "phase3_time_ms": p3_time * 1000,
             "start_time": t0_p2,
             "end_time": time.time()
+        },
+        "reasoning_log": reasoning_log,
+        "plan_financial_summary": {
+            "total_expected_cost": round(total_w_cost, 2),
+            "total_w_survival": round(total_w_survival, 4),
+            "avg_confidence": avg_confidence,
+            "legs_evaluated": arch_legs
         }
 
     }
@@ -713,7 +776,8 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
             spatial_rx_indices,
             departure_hour,
             speed_profiles,
-            p2_subgraph_nodes
+            p2_subgraph_nodes,
+            payload.shift_start_minutes
         )
         for archetype in available_archetypes
     ]
