@@ -137,7 +137,7 @@ async def lifespan(app: FastAPI):
 from fastapi.middleware.cors import CORSMiddleware
 
 limiter = Limiter(key_func=get_remote_address)
-app = FastAPI(lifespan=lifespan, title="Prime Logistics Engine V1.4")
+app = FastAPI(lifespan=lifespan, title="Prime Logistics Engine V1.4", redirect_slashes=False)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -225,6 +225,7 @@ def _write_audit_log(
         logger.error(f"Audit log write failed: {e}")
 
 @app.post('/fleet', response_model=FleetResponse)
+@app.post('/fleet/', response_model=FleetResponse)
 @limiter.limit("10/minute;100/hour")
 async def fleet_endpoint(
     payload: FleetRequest, 
@@ -264,6 +265,7 @@ async def fleet_endpoint(
         semaphore.release()
 
 @app.post('/route', response_model=RouteResponse)
+@app.post('/route/', response_model=RouteResponse)
 @limiter.limit("10/minute;100/hour")
 async def calculate_route(
     payload: RouteRequest, 
@@ -469,6 +471,7 @@ async def calculate_route(
         semaphore.release()
 
 @app.get("/health")
+@app.get("/health/")
 async def health():
     graph_ok = hasattr(app.state, "base_graph") and app.state.base_graph is not None
     return {
