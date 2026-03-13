@@ -16,4 +16,4 @@ RUN uv sync --frozen --no-dev --python 3.14
 COPY . .
 
 EXPOSE 7860
-CMD ["uv", "run", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
