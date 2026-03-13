@@ -5,7 +5,7 @@ export default function ExcelTemplateButton({ className = '' }) {
       id="download-excel-template"
       href="/ejemplo_rutas.xlsx"
       download="ejemplo_rutas.xlsx"
-      className={`inline-flex items-center gap-2 text-zinc-400 hover:text-blue-400 transition-colors text-sm ${className}`}
+      className={`inline-flex items-center gap-2 text-gray-400 hover:text-[#1F9D6A] transition-colors text-sm ${className}`}
     >
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}

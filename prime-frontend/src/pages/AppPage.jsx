@@ -1,5 +1,6 @@
 //prime-frontend/src/pages/AppPage.jsx
 import { useState } from 'react';
+import { useAuth } from '../hooks/useAuth';
 import ExcelUploader from '../components/ExcelUploader';
 import LoadingState from '../components/LoadingState';
 import ChatResult from '../components/ChatResult';
@@ -8,19 +9,18 @@ import ErrorState from '../components/ErrorState';
 import { sendFleetRequest } from '../services/fleetApi';
 
 export default function AppPage() {
-  const [appState, setAppState] = useState('idle');       // idle | loading | result | map | error
+  const { user, signOut } = useAuth();
+  const [appState, setAppState] = useState('idle');
   const [fleetResponse, setFleetResponse] = useState(null);
   const [selectedArchetype, setSelectedArchetype] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [parsedPayload, setParsedPayload] = useState(null);
   const [loadingStart, setLoadingStart] = useState(null);
 
-  // Called by ExcelUploader after successful parse
   const handleParsed = async (payload) => {
     setParsedPayload(payload);
     setAppState('loading');
     setLoadingStart(Date.now());
-
     try {
       const response = await sendFleetRequest(payload);
       setFleetResponse(response);
@@ -31,67 +31,38 @@ export default function AppPage() {
     }
   };
 
-  // Called by ChatResult when a chip is clicked
-  const handleSelectArchetype = (key) => {
-    setSelectedArchetype(key);
-    setAppState('map');
-  };
-
-  // Called from MapView to change archetype without going back
-  const handleChangeArchetype = (key) => {
-    setSelectedArchetype(key);
-  };
-
-  const handleRetry = () => {
-    setErrorMessage('');
-    setFleetResponse(null);
-    setAppState('idle');
-  };
-
-  const handleBackToResults = () => {
-    setAppState('result');
-  };
+  const handleSelectArchetype = (key) => { setSelectedArchetype(key); setAppState('map'); };
+  const handleChangeArchetype = (key) => { setSelectedArchetype(key); };
+  const handleRetry = () => { setErrorMessage(''); setFleetResponse(null); setAppState('idle'); };
+  const handleBackToResults = () => { setAppState('result'); };
 
   return (
-    <div id="app-page" className="min-h-screen bg-zinc-950">
-      {/* Simple header (shown on non-map states) */}
+    <div id="app-page" className="min-h-screen bg-gray-50">
       {appState !== 'map' && (
-        <header className="w-full px-6 py-4 border-b border-zinc-900/50">
-          <a href="/" className="text-lg font-bold text-white tracking-tight hover:text-blue-400 transition-colors">
-            [NOMBRE]
+        <header className="w-full px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
+          <a href="/" className="text-lg font-bold text-[#0F172A] tracking-tight hover:text-[#1F9D6A] transition-colors">
+            Abbey
           </a>
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-gray-400 hidden sm:block">{user?.email}</span>
+            <button onClick={signOut}
+              className="text-xs text-gray-400 hover:text-gray-700 transition-colors px-3 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300">
+              Salir
+            </button>
+          </div>
         </header>
       )}
 
-      {appState === 'idle' && (
-        <ExcelUploader onParsed={handleParsed} />
-      )}
-
-      {appState === 'loading' && (
-        <LoadingState startTime={loadingStart} />
-      )}
-
+      {appState === 'idle' && <ExcelUploader onParsed={handleParsed} />}
+      {appState === 'loading' && <LoadingState startTime={loadingStart} />}
       {appState === 'result' && (
-        <ChatResult
-          fleetResponse={fleetResponse}
-          parsedPayload={parsedPayload}
-          onSelectArchetype={handleSelectArchetype}
-        />
+        <ChatResult fleetResponse={fleetResponse} parsedPayload={parsedPayload} onSelectArchetype={handleSelectArchetype} />
       )}
-
       {appState === 'map' && (
-        <MapView
-          fleetResponse={fleetResponse}
-          selectedArchetype={selectedArchetype}
-          parsedPayload={parsedPayload}
-          onChangeArchetype={handleChangeArchetype}
-          onBack={handleBackToResults}
-        />
+        <MapView fleetResponse={fleetResponse} selectedArchetype={selectedArchetype}
+          parsedPayload={parsedPayload} onChangeArchetype={handleChangeArchetype} onBack={handleBackToResults} />
       )}
-
-      {appState === 'error' && (
-        <ErrorState message={errorMessage} onRetry={handleRetry} />
-      )}
+      {appState === 'error' && <ErrorState message={errorMessage} onRetry={handleRetry} />}
     </div>
   );
 }
