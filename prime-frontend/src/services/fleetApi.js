@@ -3,7 +3,7 @@
  */
 
 // 1. Capturamos y sanitizamos la URL del backend
-const BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 const API_KEY = import.meta.env.VITE_API_KEY || 'messiycr7';
 
 const ERROR_MESSAGES = {
@@ -14,7 +14,7 @@ const ERROR_MESSAGES = {
 
 export async function sendFleetRequest(payload) {
   let response;
-  const fullUrl = '/api/fleet';
+  const fullUrl = `${API_URL}/fleet`;
 
   try {
     response = await fetch(fullUrl, {
