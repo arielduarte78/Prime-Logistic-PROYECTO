@@ -16,8 +16,8 @@ dependencies = [
     "pyyaml>=6.0.3",
     "rustworkx==0.17.1",
     "scipy==1.17.1",
+    "slowapi>=0.1.9",
     "uvicorn==0.41.0",
-    "slowapi==0.1.10",
 ]
 
 [tool.pyright]
