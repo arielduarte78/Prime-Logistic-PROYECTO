@@ -1,3 +1,4 @@
+//prime-frontend/src/components/ChatResult.jsx
 import { ARCHETYPES } from '../constants/archetypes';
 import ArchetypeChip from './ArchetypeChip';
 import TechnicalDetail from './TechnicalDetail';
@@ -26,11 +27,11 @@ export default function ChatResult({ fleetResponse, parsedPayload, onSelectArche
     <div id="chat-result" className="flex flex-col items-center w-full max-w-2xl mx-auto gap-6 py-10 px-4">
       {/* CFO Report Trigger */}
       <div className="w-full flex justify-end">
-        <button 
+        <button
           onClick={() => setIsCfoModalOpen(true)}
           className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-[1.25rem] text-[10px] font-black uppercase tracking-[0.2em] hover:bg-black transition-all shadow-xl shadow-slate-200 ring-1 ring-white/10 hover:-translate-y-0.5 group"
         >
-          <TrendingUp size={14} className="text-emerald-400 group-hover:scale-110 transition-transform" /> 
+          <TrendingUp size={14} className="text-emerald-400 group-hover:scale-110 transition-transform" />
           Audit Financial Report (CFO)
         </button>
       </div>
@@ -51,16 +52,16 @@ Elegí una estrategia para ver el mapa de rutas:`}
           const plan = plans[key];
           const summary = plan?.plan_financial_summary;
           const isSelected = localSelected === key;
-          
+
           return (
             <div key={key} className="flex flex-col items-center gap-1">
-              <ArchetypeChip 
-                archetype={arch} 
+              <ArchetypeChip
+                archetype={arch}
                 onClick={(id) => {
                   setLocalSelected(id);
                   onSelectArchetype(id);
-                }} 
-                isSelected={isSelected} 
+                }}
+                isSelected={isSelected}
               />
               {summary && (
                 <div className={`flex items-center gap-2 text-xs font-mono font-bold ${isSelected ? 'text-emerald-500' : 'text-gray-400 opacity-60'}`}>
@@ -112,9 +113,9 @@ Elegí una estrategia para ver el mapa de rutas:`}
       <TechnicalDetail fleetResponse={fleetResponse} selectedArchetype={localSelected} />
 
       {/* CFO Audit Modal */}
-      <CfoReportModal 
-        isOpen={isCfoModalOpen} 
-        onClose={() => setIsCfoModalOpen(false)} 
+      <CfoReportModal
+        isOpen={isCfoModalOpen}
+        onClose={() => setIsCfoModalOpen(false)}
         breakdown={currentPlan.plan_financial_summary}
         archetype={localSelected}
       />
