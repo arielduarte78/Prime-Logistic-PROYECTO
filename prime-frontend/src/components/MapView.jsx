@@ -279,7 +279,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                 );
               })
             }
-            {/* Pareto segments (Bug 1 Fix) */}
+            {/* Pareto segments (Bug 1 Fix - Redraw on selectedArchetype change) */}
             {(fleetResponse?.segments_pareto || []).map((segment, sIdx) => {
               return (segment.pareto_solutions || [])
                 .filter(sol => sol.archetype === selectedArchetype)

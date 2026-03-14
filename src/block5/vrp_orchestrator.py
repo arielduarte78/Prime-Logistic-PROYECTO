@@ -417,6 +417,33 @@ def _compute_archetype_plan(
             "estimated_cost_share": round(total_w_cost / max(len(plan), 1), 2),
         }
 
+    # Fracture 5: Build detailed cost breakdown for each assignment
+    for a_plan in plan:
+        # We need the full path of nodes for distance/tolls
+        # r_indices contains the RX indices of the route
+        path_nodes = a_plan["route_indices"]
+        a_plan["cost_breakdown"] = _calculate_cost_breakdown(
+            path_nodes,
+            a_plan["schedule"],
+            base_graph,
+            client_cost_env,
+            departure_time or f"{shift_start_minutes//60:02d}:{shift_start_minutes%60:02d}"
+        )
+
+    # Fracture 6: Aggregate P&L for the whole plan
+    agg_opex_dist = sum(v.get("cost_breakdown", {}).get("opex_distance_ars", 0) for v in plan)
+    agg_opex_time = sum(v.get("cost_breakdown", {}).get("opex_time_ars", 0) for v in plan)
+    agg_capex = sum(v.get("cost_breakdown", {}).get("capex_amortization_ars", 0) for v in plan)
+    agg_fixed = sum(v.get("cost_breakdown", {}).get("fixed_costs_ars", 0) for v in plan)
+    agg_total = agg_opex_dist + agg_opex_time + agg_capex + agg_fixed
+    agg_variance = []
+    for v in plan:
+        agg_variance.extend(v.get("cost_breakdown", {}).get("executive_variance_analysis", []))
+    agg_variance = list(set(agg_variance))[:5] # Deduplicate and limit
+
+    # Retrieve dolar_mep from cost_env for aggregation
+    dolar_mep = getattr(client_cost_env, "dolar_mep_ars", 1415.52)
+
     plan_dict = {
 
         "assignments": plan,
@@ -432,10 +459,17 @@ def _compute_archetype_plan(
         },
         "reasoning_log": reasoning_log,
         "plan_financial_summary": {
-            "total_expected_cost": round(total_w_cost, 2),
+            "total_expected_cost": round(agg_total, 2),
             "total_w_survival": round(total_w_survival, 4),
             "avg_confidence": avg_confidence,
-            "legs_evaluated": arch_legs
+            "legs_evaluated": arch_legs,
+            "opex_distance_ars": round(agg_opex_dist, 2),
+            "opex_time_ars": round(agg_opex_time, 2),
+            "capex_amortization_ars": round(agg_capex, 2),
+            "fixed_costs_ars": round(agg_fixed, 2),
+            "executive_variance_analysis": agg_variance,
+            "costo_total_ars": round(agg_total, 2),
+            "costo_total_usd": round(agg_total / dolar_mep, 2)
         },
         "topology_visuals": {
             "toll_markers": _detect_toll_crossings(nodes_of_interest, plan, base_graph, client_cost_env, departure_time),
@@ -473,61 +507,56 @@ def _haversine_path_km(path_rx, base_graph) -> float:
         total_km += 6371.0 * c
     return total_km
 
-def _detect_toll_crossings(nodes_of_interest, plan, base_graph, cost_env, departure_time) -> list:
+def _detect_toll_crossings(path_nodes, plan_ref, base_graph, cost_env, departure_time) -> list:
     markers = []
-    # Identify unique toll edge crossings in the final routes
-    for a_plan in plan:
-        path_rx = a_plan.get("route_indices", [])
-        for i in range(len(path_rx) - 1):
-            u_idx, v_idx = path_rx[i], path_rx[i+1]
-            try:
-                # get_edge_data returns the EdgePayload
-                edge_payload = base_graph.get_edge_data(u_idx, v_idx)
-                if not edge_payload: continue
-                
-                name_upper = edge_payload.name.upper() if getattr(edge_payload, 'name', None) else ""
-                is_toll = False
-                toll_name = ""
-                
-                if "25 DE MAYO" in name_upper:
-                    is_toll, toll_name = True, "Peaje AUSA 25 de Mayo"
-                elif "PERITO MORENO" in name_upper:
-                    is_toll, toll_name = True, "Peaje AUSA Perito Moreno"
-                elif "ILLIA" in name_upper:
-                    is_toll, toll_name = True, "Peaje AUSA Illia"
-                elif "ACCESO NORTE" in name_upper or "PANAMERICANA" in name_upper:
-                    is_toll, toll_name = True, "Peaje Acceso Norte"
-                elif "ACCESO OESTE" in name_upper:
-                    is_toll, toll_name = True, "Peaje Acceso Oeste"
-                
-                if is_toll:
-                    u_node = base_graph[u_idx]
-                    markers.append({
-                        "lat": u_node.lat,
-                        "lon": u_node.lon,
-                        "name": toll_name,
-                        "vehicle_id": a_plan["vehicle"].id
-                    })
-            except:
-                continue
+    # Identify unique toll edge crossings
+    # If plan_ref is provided, we use it for vehicle_id, else it's a generic path audit
+    for i in range(len(path_nodes) - 1):
+        u_idx, v_idx = path_nodes[i], path_nodes[i+1]
+        try:
+            edge_payload = base_graph.get_edge_data(u_idx, v_idx)
+            if not edge_payload: continue
+            
+            name_upper = edge_payload.name.upper() if getattr(edge_payload, 'name', None) else ""
+            is_toll = False
+            toll_name = ""
+            cost = 0.0
+            
+            if "25 DE MAYO" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje AUSA 25 de Mayo", getattr(cost_env, "ausa_25_mayo_ars", 1200.0)
+            elif "PERITO MORENO" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje AUSA Perito Moreno", 1200.0
+            elif "ILLIA" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje AUSA Illia", 900.0
+            elif "ACCESO NORTE" in name_upper or "PANAMERICANA" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje Acceso Norte", getattr(cost_env, "acceso_norte_oeste_ars", 1300.0)
+            elif "ACCESO OESTE" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje Acceso Oeste", 1300.0
+            
+            if is_toll:
+                u_node = base_graph[u_idx]
+                markers.append({
+                    "lat": u_node.lat,
+                    "lon": u_node.lon,
+                    "name": toll_name,
+                    "costo_ars": cost,
+                    "vehicle_id": getattr(plan_ref, 'id', 'audit') if plan_ref else 'audit'
+                })
+        except:
+            continue
     return markers
 
 def _get_h3_polygons(node_set, threat_matrix) -> list:
     import h3
     polygons = []
-    # Collect all unique H3 cells in the filtered subgraph
-    seen_h3 = set()
-    # In this context, we check the threat_matrix for high risk areas
     for h3_idx, mu in threat_matrix.items():
-        if mu > 1.1: # High risk threshold
-            # Get boundary coordinates for the H3 cell
+        if mu > 1.1:
             try:
-                # h3.cell_to_boundary returns lat-lon tuples
                 boundary = h3.cell_to_boundary(h3_idx)
                 polygons.append({
                     "h3_index": h3_idx,
                     "intensity": mu,
-                    "boundary": [[lat, lon] for lat, lon in boundary]
+                    "boundary": [[float(lat), float(lon)] for lat, lon in boundary]
                 })
             except:
                 continue
@@ -536,7 +565,7 @@ def _get_h3_polygons(node_set, threat_matrix) -> list:
 def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_time_str) -> dict:
     from src.api.schemas import CostBreakdown
     
-    # Defaults de Ecuación de Colapso (Launch Plan 2.0)
+    # 1. Constants from Single Source of Truth
     gasoil = getattr(cost_env, "precio_gasoil_ars", 1865.0)
     l_por_km = getattr(cost_env, "consumo_l_por_km", 0.33)
     dolar_mep = getattr(cost_env, "dolar_mep_ars", 1415.52)
@@ -544,30 +573,43 @@ def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_
 
     dist_km = _haversine_path_km(path_nodes, base_graph)
     
-    # OPEX Variable (CKM)
-    comb = dist_km * l_por_km * gasoil
-    neum = dist_km * 57.00
-    mant = dist_km * 135.40
-    
-    # OPEX Fijo (CH)
-    # Duración total desde el primer al último punto del schedule
     if schedule and len(schedule) >= 2:
         dur_min = (schedule[-1]["suggested_arrival_min"] or 0) - (schedule[0]["suggested_arrival_min"] or 0)
     else:
         dur_min = 0
     dur_hr = max(dur_min, 0) / 60.0
     
+    # 2. Accounting Grouping (CFO-Grade)
+    # OPEX Distance: Fuel + Tires + Maint ($57 + $135.40/km)
+    comb = dist_km * l_por_km * gasoil
+    neum = dist_km * 57.00
+    mant = dist_km * 135.40
+    opex_dist = comb + neum + mant
+
+    # OPEX Time: Labor (CCT 40/89)
     lab = dur_hr * 12140.27
+    opex_time = lab
+
+    # CAPEX Amortization: Depreciation + Insurance + Telemetry
     amort = dur_hr * 4234.84
     seg = dur_hr * 1818.18
     tele = dur_hr * 937.50
+    capex_amort = amort + seg + tele
 
-    # Peajes
-    peajes = _detect_toll_crossings(path_nodes, schedule, base_graph, cost_env, start_time_str)
+    # Fixed Costs: Peajes + Viáticos
+    peajes = _detect_toll_crossings(path_nodes, None, base_graph, cost_env, start_time_str)
     costo_peajes = sum(p.get("costo_ars", 0) for p in peajes)
+    fixed_costs = costo_peajes + viatico
 
-    total = comb + neum + mant + lab + amort + seg + tele + costo_peajes + viatico
-    
+    total = opex_dist + opex_time + capex_amort + fixed_costs
+
+    # 3. Variance Analysis (Executive Summary)
+    reasons = []
+    if dur_hr > 0 and (dist_km / dur_hr) < 20:
+        reasons.append(f"Alerta: Baja velocidad comercial detectada ({dist_km/dur_hr:.1f} km/h). El OPEX de tiempo y CAPEX inmovilizado traccionan el alza en el Cost-to-Serve por arriba del promedio regional.")
+    if costo_peajes > 4000:
+        reasons.append("Anexo Peajes: El delta de flete está impactado por peajes dinámicos en accesos AMBA.")
+
     return CostBreakdown(
         distancia_km=round(dist_km, 2),
         consumo_litros=round(dist_km * l_por_km, 2),
@@ -580,6 +622,12 @@ def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_
         costo_seguros_hora=1818.18,
         costo_telemetria_hora=937.50,
         costo_peajes_ars=round(costo_peajes, 2),
+        viatico_ars=round(viatico, 2),
+        opex_distance_ars=round(opex_dist, 2),
+        opex_time_ars=round(opex_time, 2),
+        capex_amortization_ars=round(capex_amort, 2),
+        fixed_costs_ars=round(fixed_costs, 2),
+        executive_variance_analysis=reasons,
         costo_total_ars=round(total, 2),
         costo_total_usd=round(total / dolar_mep, 2)
     ).model_dump()

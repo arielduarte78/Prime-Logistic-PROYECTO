@@ -14,6 +14,13 @@ class EconomicProfile(BaseModel):
     ausa_paseo_bajo_ars: Optional[float] = None
     acceso_norte_oeste_ars: Optional[float] = None
     aubasa_sur_ars: Optional[float] = None
+    
+    # Deep CFO Parameters
+    valor_unidad_ars: float = 85000000.0   # Precio de mercado camión 15t
+    alicuota_art: float = 0.045            # 4.5% sobre masa salarial
+    sueldo_base_ars: float = 850000.0      # Básico CCT 40/89 Camioneros
+    consumo_l_km: float = 0.33             # Stop-and-go AMBA
+    factor_amortizacion: float = 0.20      # 20% anual lineal
 
 class VehicleInput(BaseModel):
     id: str = Field(..., pattern=r'^[a-zA-Z0-9_-]+$', max_length=50)
@@ -74,6 +81,13 @@ class CostBreakdown(BaseModel):
     peajes_cruzados: List[Dict[str, Any]] = []
     costo_peajes_ars: float
     viatico_ars: float = 15671.16
+
+    # --- CFO-Grade P&L Segments ---
+    opex_distance_ars: float = 0.0         # Combustible + Neumáticos + Mantenimiento
+    opex_time_ars: float = 0.0             # Laboral (Sueldo + Cargas + SAC/Vac)
+    capex_amortization_ars: float = 0.0    # Depreciación + Seguros + Patentes
+    fixed_costs_ars: float = 0.0           # Peajes + Viáticos
+    executive_variance_analysis: List[str] = [] # Justificaciones financieras
 
     # Totales
     costo_total_ars: float

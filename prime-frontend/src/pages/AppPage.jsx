@@ -21,9 +21,13 @@ export default function AppPage() {
   const [advConfig, setAdvConfig] = useState(null);
 
   const handleParsed = async (payload) => {
+    const [h, m] = (advConfig?.departure_time || "08:00").split(':').map(Number);
+    const shiftMin = h * 60 + m;
+
     const finalPayload = {
       ...payload,
       departure_time: advConfig?.departure_time,
+      shift_start_minutes: shiftMin,
       stochastic_mode: advConfig?.stochastic_mode || false,
       economic_profile: {
         precio_gasoil_ars: advConfig?.precio_gasoil_ars,

@@ -2,11 +2,13 @@ import { ARCHETYPES } from '../constants/archetypes';
 import ArchetypeChip from './ArchetypeChip';
 import TechnicalDetail from './TechnicalDetail';
 import CostBreakdownPanel from './CostBreakdownPanel';
+import CfoReportModal from './CfoReportModal';
 import React, { useState } from 'react';
-import { Calculator, DollarSign, Shield, Zap } from 'lucide-react';
+import { Calculator, DollarSign, Shield, Zap, TrendingUp } from 'lucide-react';
 
 export default function ChatResult({ fleetResponse, parsedPayload, onSelectArchetype }) {
   const [localSelected, setLocalSelected] = useState('equilibrista');
+  const [isCfoModalOpen, setIsCfoModalOpen] = useState(false);
   const plans = fleetResponse?.plans || {};
   const numVehicles = parsedPayload?.vehicles?.length || 0;
   const numDestinations = parsedPayload?.destinations?.length || 0;
@@ -22,8 +24,19 @@ export default function ChatResult({ fleetResponse, parsedPayload, onSelectArche
 
   return (
     <div id="chat-result" className="flex flex-col items-center w-full max-w-2xl mx-auto gap-6 py-10 px-4">
+      {/* CFO Report Trigger */}
+      <div className="w-full flex justify-end">
+        <button 
+          onClick={() => setIsCfoModalOpen(true)}
+          className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-[1.25rem] text-[10px] font-black uppercase tracking-[0.2em] hover:bg-black transition-all shadow-xl shadow-slate-200 ring-1 ring-white/10 hover:-translate-y-0.5 group"
+        >
+          <TrendingUp size={14} className="text-emerald-400 group-hover:scale-110 transition-transform" /> 
+          Audit Financial Report (CFO)
+        </button>
+      </div>
+
       {/* Chat bubble */}
-      <div className="w-full p-6 rounded-2xl bg-white border border-gray-200 shadow-sm">
+      <div className="w-full p-6 rounded-[2rem] bg-white border border-gray-100 shadow-sm ring-1 ring-black/5">
         <p className="text-gray-800 leading-relaxed whitespace-pre-line">
           {`Analicé ${numVehicles} vehículo${numVehicles !== 1 ? 's' : ''} y ${numDestinations} destino${numDestinations !== 1 ? 's' : ''}.
 Encontré ${availableArchetypes.length} estrategia${availableArchetypes.length !== 1 ? 's' : ''} de ruteo disponible${availableArchetypes.length !== 1 ? 's' : ''}.
@@ -97,6 +110,14 @@ Elegí una estrategia para ver el mapa de rutas:`}
 
       {/* Technical detail */}
       <TechnicalDetail fleetResponse={fleetResponse} selectedArchetype={localSelected} />
+
+      {/* CFO Audit Modal */}
+      <CfoReportModal 
+        isOpen={isCfoModalOpen} 
+        onClose={() => setIsCfoModalOpen(false)} 
+        breakdown={currentPlan.plan_financial_summary}
+        archetype={localSelected}
+      />
     </div>
   );
 }
