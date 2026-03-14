@@ -44,9 +44,9 @@ def compute_edge_cost(
 ) -> tuple[float, bool]:
     """Centralized financial logic for evaluating single edges under specific settings."""
     if archetype == "tanque":
-        lambda_cost, lambda_risk = 0.1, 0.9
+        lambda_cost, lambda_risk = 0.01, 0.99
     elif archetype == "apostador":
-        lambda_cost, lambda_risk = 0.9, 0.1
+        lambda_cost, lambda_risk = 0.99, 0.01
     elif archetype == "equilibrista":
         lambda_cost, lambda_risk = 0.5, 0.5
     else:
