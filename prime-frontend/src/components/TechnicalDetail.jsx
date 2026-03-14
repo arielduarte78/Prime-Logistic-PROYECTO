@@ -2,13 +2,12 @@
 import { useState } from 'react';
 import { ARCHETYPES } from '../constants/archetypes';
 
-export default function TechnicalDetail({ fleetResponse, selectedArchetype }) {
+export default function TechnicalDetail({ fleetResponse, selectedArchetype, departureTime }) {
   const [isOpen, setIsOpen] = useState(false);
-  if (!fleetResponse) return null;
-
-  const plansToDisplay = selectedArchetype 
-    ? Object.entries(fleetResponse.plans || {}).filter(([arch]) => arch === selectedArchetype)
-    : Object.entries(fleetResponse.plans || {});
+  if (!fleetResponse || !selectedArchetype || !fleetResponse.plans) return null;
+  
+  const plan = fleetResponse.plans[selectedArchetype];
+  if (!plan) return null;
 
   return (
     <div className="w-full max-w-2xl mt-4">
@@ -31,13 +30,13 @@ export default function TechnicalDetail({ fleetResponse, selectedArchetype }) {
           </div>
 
           {/* Per-archetype hierarchical schedule */}
-          {plansToDisplay.map(([arch, plan]) => {
+          {(() => {
             if (!plan?.assignments) return null;
-            const archDef = ARCHETYPES[arch];
+            const archDef = ARCHETYPES[selectedArchetype];
             if (!archDef) return null;
 
             return (
-              <div key={arch} className="border-t border-gray-200 pt-4">
+              <div key={selectedArchetype} className="border-t border-gray-200 pt-4">
                 <p className="font-medium text-gray-900 mb-3">{archDef.emoji} {archDef.label}</p>
 
                 <div className="space-y-3">
@@ -84,7 +83,7 @@ export default function TechnicalDetail({ fleetResponse, selectedArchetype }) {
                 </div>
               </div>
             );
-          })}
+          })()}
         </div>
       )}
     </div>

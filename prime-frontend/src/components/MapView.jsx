@@ -269,10 +269,14 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                 if (coords.length < 2) return null;
                 return (
                   <React.Fragment key={vw.vehicleId}>
-                    <Polyline positions={coords}
+                    <Polyline 
+                      key={`route-bg-${selectedArchetype}-${vw.vehicleId}-${snappedCoords[key] ? 'snapped' : 'raw'}`}
+                      positions={coords}
                       pathOptions={{ color: '#000', weight: 9, opacity: 0.12, lineCap: 'round', lineJoin: 'round' }}
                       smoothFactor={0.5} />
-                    <Polyline positions={coords}
+                    <Polyline 
+                      key={`route-fg-${selectedArchetype}-${vw.vehicleId}-${snappedCoords[key] ? 'snapped' : 'raw'}`}
+                      positions={coords}
                       pathOptions={{ color: vw.color, weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }}
                       smoothFactor={0.5} />
                   </React.Fragment>

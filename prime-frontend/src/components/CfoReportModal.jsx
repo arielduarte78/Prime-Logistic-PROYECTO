@@ -136,8 +136,8 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
                       <td className="p-5 text-right font-black">$ {opex_dist.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td className="p-5 text-right text-slate-400">{((opex_dist/totalCost)*100).toFixed(1)}%</td>
                     </tr>
-                    <tr className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="p-5 text-slate-900">Personal y Estructura</td>
+                     <tr className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                      <td className="p-5 text-slate-900">Personal y Estructura (Fijos por tiempo)</td>
                       <td className="p-5 text-right font-black">$ {(opex_time + capex).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td className="p-5 text-right text-slate-400">{(((opex_time + capex)/totalCost)*100).toFixed(1)}%</td>
                     </tr>
