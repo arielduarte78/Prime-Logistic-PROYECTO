@@ -96,7 +96,7 @@ Elegí una estrategia para ver el mapa de rutas:`}
       )}
 
       {/* Technical detail */}
-      <TechnicalDetail fleetResponse={fleetResponse} />
+      <TechnicalDetail fleetResponse={fleetResponse} selectedArchetype={localSelected} />
     </div>
   );
 }

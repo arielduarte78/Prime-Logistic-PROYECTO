@@ -2,9 +2,13 @@
 import { useState } from 'react';
 import { ARCHETYPES } from '../constants/archetypes';
 
-export default function TechnicalDetail({ fleetResponse }) {
+export default function TechnicalDetail({ fleetResponse, selectedArchetype }) {
   const [isOpen, setIsOpen] = useState(false);
   if (!fleetResponse) return null;
+
+  const plansToDisplay = selectedArchetype 
+    ? Object.entries(fleetResponse.plans || {}).filter(([arch]) => arch === selectedArchetype)
+    : Object.entries(fleetResponse.plans || {});
 
   return (
     <div className="w-full max-w-2xl mt-4">
@@ -27,7 +31,7 @@ export default function TechnicalDetail({ fleetResponse }) {
           </div>
 
           {/* Per-archetype hierarchical schedule */}
-          {Object.entries(fleetResponse.plans || {}).map(([arch, plan]) => {
+          {plansToDisplay.map(([arch, plan]) => {
             if (!plan?.assignments) return null;
             const archDef = ARCHETYPES[arch];
             if (!archDef) return null;

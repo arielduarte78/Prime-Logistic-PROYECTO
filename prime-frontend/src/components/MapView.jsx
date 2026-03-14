@@ -278,7 +278,27 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                   </React.Fragment>
                 );
               })
-            }
+            {/* Pareto segments (Bug 1 Fix) */}
+            {(fleetResponse?.segments_pareto || []).map((segment, sIdx) => {
+              return (segment.pareto_solutions || [])
+                .filter(sol => sol.archetype === selectedArchetype)
+                .map((sol, solIdx) => {
+                  if (!sol.route_coordinates || sol.route_coordinates.length < 2) return null;
+                  return (
+                    <Polyline
+                      key={`pareto-${sIdx}-${solIdx}`}
+                      positions={sol.route_coordinates}
+                      pathOptions={{
+                        color: ARCHETYPES[selectedArchetype]?.color || '#6366F1',
+                        weight: 4,
+                        opacity: 0.4,
+                        dashArray: '5, 8'
+                      }}
+                      smoothFactor={1}
+                    />
+                  );
+                });
+            })}
 
             {/* Vehicle origins */}
             {(parsedPayload?.vehicles || []).map((v) => (
