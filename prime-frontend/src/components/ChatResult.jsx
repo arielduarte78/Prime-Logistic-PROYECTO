@@ -51,8 +51,7 @@ Seleccione Estrategia de Auditoría:`}
         {availableArchetypes.map(([key, arch]) => {
           // REFERENCIA DIRECTA AL PLAN DE LA ESTRATEGIA EN LA VUELTA DEL MAP
           const planData = plans[key]; 
-          const totalArchetypeCost = planData?.assignments?.reduce((acc, curr) => 
-            acc + (curr.cost_breakdown?.costo_total_ars || 0), 0) || 0;
+          const totalArchetypeCost = planData?.plan_financial_summary?.total_expected_cost || 0;
           
           const isSelected = localSelected === key;
 

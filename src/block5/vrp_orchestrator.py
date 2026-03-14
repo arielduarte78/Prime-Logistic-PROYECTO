@@ -48,6 +48,22 @@ _archetype_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="arch
 
 
 
+def _coord_distance_km(coords: list) -> float:
+    if not coords or len(coords) < 2:
+        return 0.0
+    total = 0.0
+    for i in range(len(coords) - 1):
+        lat1, lon1 = coords[i]
+        lat2, lon2 = coords[i+1]
+        phi1, lam1 = math.radians(lat1), math.radians(lon1)
+        phi2, lam2 = math.radians(lat2), math.radians(lon2)
+        dphi = phi2 - phi1
+        dlam = lam2 - lam1
+        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        total += 6371.0 * c
+    return total
+
 def _compute_archetype_plan(
     archetype: str,
     base_graph,
@@ -133,7 +149,7 @@ def _compute_archetype_plan(
 
     if not result:
 
-        return archetype, {"error": "No viable fleet assignment found."}, 0
+        return archetype, {"error": "No viable fleet assignment found."}, 0, 0
 
 
 
@@ -229,51 +245,36 @@ def _compute_archetype_plan(
 
 
 
-    # Phase 4
-
+    # Phase 4 & Real Distance calculation
     legs_evaluations = []
-
     legs_count = 0
+    leg_real_distances = {} # (source_idx, target_idx) -> real_km
+    leg_coords = {} # (source_idx, target_idx) -> list
 
     for v_plan in plan:
-
         r_indices = v_plan["route_indices"]
-
         for step in range(len(r_indices) - 1):
-
             source_idx = r_indices[step]
-
             target_idx = r_indices[step + 1]
-
-            if source_idx == target_idx:
-
-                continue
+            if source_idx == target_idx: continue
+            
+            leg_key = (source_idx, target_idx)
+            if leg_key in leg_real_distances: continue
 
             s_rx = nodes_of_interest[source_idx]
-
             t_rx = nodes_of_interest[target_idx]
-
+            
+            # Simple spatial bounding box for MultiObjective Engine
             s_node = base_graph[s_rx]
-
             t_node = base_graph[t_rx]
-
             lat_center = (s_node.lat + t_node.lat) / 2
-
             lon_center = (s_node.lon + t_node.lon) / 2
-
             diagonal = math.sqrt((s_node.lat - t_node.lat)**2 + (s_node.lon - t_node.lon)**2)
-
             seg_radius = max(diagonal * 0.6, 0.05)
-
             seg_candidates = spatial_index.query_ball_point([lat_center, lon_center], seg_radius)
-
             segment_nodes = set(spatial_rx_indices[i] for i in seg_candidates)
-
             segment_nodes.add(s_rx)
-
             segment_nodes.add(t_rx)
-
-
 
             legacy_graph, config, _ = build_legacy_graph(
                 rx_graph=base_graph,
@@ -288,94 +289,51 @@ def _compute_archetype_plan(
                 fallback_counter=fallback_counter
             )
 
-
-
             node_coords = {n.node_id: (n.lat, n.lon) for n in legacy_graph.nodes if n.lat != 0.0 or n.lon != 0.0}
-
             engine = MultiObjectiveEngine(eps_1=0.1, eps_2=50.0, max_total_labels=150000)
-
             frontier_labels = engine.solve(legacy_graph, str(s_rx), str(t_rx), node_coords=node_coords)
 
-
-
             if frontier_labels:
-
                 pareto_result = ParetoFrontResult.from_labels(frontier_labels, engine)
-
                 archetipos_inner = {
-
                     "tanque": pareto_result.extract_tank(),
-
                     "apostador": pareto_result.extract_gambler(),
-
                     "equilibrista": pareto_result.extract_tightrope(),
-
                     "unicornio": pareto_result.extract_unicorn(),
-
                 }
-
                 leg_sols = []
-
                 soluciones_validas = [s for s in archetipos_inner.values() if s is not None]
-
                 if soluciones_validas:
-
                     w_min = min(s.w_survival for s in soluciones_validas)
-
                     w_max = max(s.w_survival for s in soluciones_validas)
-
-                    def normalize_confidence(w_survival, w_min=w_min, w_max=w_max):
-
-                        if w_max == w_min:
-
-                            return 100.0
-
-                        return round(100.0 * (w_max - w_survival) / (w_max - w_min), 1)
-
+                    normalize_confidence = lambda w, wm=w_min, wmx=w_max: round(100.0 * (wmx - w) / (wmx - wm), 1) if wmx != wm else 100.0
                 else:
-
                     normalize_confidence = lambda x: 0.0
 
-
-
                 for arch_name, sol in archetipos_inner.items():
-
                     if sol:
-
                         coords = []
-
                         for node_id in sol.path:
-
                             rx_idx = int(node_id)
-
                             node_payload = base_graph[rx_idx]
-
                             if hasattr(node_payload, 'lat') and node_payload.lat != 0.0:
-
                                 coords.append([node_payload.lat, node_payload.lon])
+                        
+                        if arch_name == archetype:
+                            leg_real_distances[leg_key] = _coord_distance_km(coords)
+                            leg_coords[leg_key] = coords
 
                         leg_sols.append(ParetoResult(
-
                             archetype=arch_name,
-
                             w_survival=sol.w_survival,
-
                             w_expected_cost=sol.w_expected_cost,
-
                             route_nodes=list(sol.path),
-
                             route_coordinates=coords,
-
                             confidence=normalize_confidence(sol.w_survival)
-
                         ))
 
-
-
                 legs_evaluations.append({
-
                     "source_osm": rx_to_osm[s_rx],
-
                     "target_osm": rx_to_osm[t_rx],
 
                     "pareto_solutions": leg_sols
@@ -401,14 +359,24 @@ def _compute_archetype_plan(
 
     avg_confidence = round(total_confidence / arch_legs, 1) if arch_legs > 0 else 0.0
 
-    reasoning_log = (
-        f"Arquetipo '{archetype}': evaluados {arch_legs} tramos. "
-        f"Costo total ponderado: {total_w_cost:.2f} ARS. "
-        f"Riesgo acumulado (w_survival): {total_w_survival:.4f}. "
-        f"Confianza promedio: {avg_confidence}%. "
-        f"Phase2: {p2_time*1000:.0f}ms, Phase3: {p3_time*1000:.0f}ms."
-    )
-
+    # Calculate real road distance per assignment
+    for a_plan in plan:
+        r_indices = a_plan["route_indices"]
+        real_dist_total = 0.0
+        full_route_coords = []
+        for step in range(len(r_indices) - 1):
+            source_idx = r_indices[step]
+            target_idx = r_indices[step + 1]
+            real_dist_total += leg_real_distances.get((source_idx, target_idx), 0.0)
+            # Extend coordinates avoiding duplicate points at junctions
+            leg_c = leg_coords.get((source_idx, target_idx), [])
+            if leg_c:
+                if not full_route_coords:
+                    full_route_coords.extend(leg_c)
+                else:
+                    full_route_coords.extend(leg_c[1:])
+        
+        a_plan["route_coordinates"] = full_route_coords
     # Per-assignment financial metrics
     for v_plan in plan:
         n_dests = len(v_plan.get("route_destinations", []))
@@ -422,12 +390,19 @@ def _compute_archetype_plan(
         # We need the full path of nodes for distance/tolls
         # r_indices contains the RX indices of the route
         path_nodes = a_plan["route_indices"]
+        real_dist_total = 0.0
+        for step in range(len(path_nodes) - 1):
+            source_idx = path_nodes[step]
+            target_idx = path_nodes[step + 1]
+            real_dist_total += leg_real_distances.get((source_idx, target_idx), 0.0)
+
         a_plan["cost_breakdown"] = _calculate_cost_breakdown(
             path_nodes,
             a_plan["schedule"],
             base_graph,
             client_cost_env,
-            departure_time or f"{shift_start_minutes//60:02d}:{shift_start_minutes%60:02d}"
+            departure_time or f"{shift_start_minutes//60:02d}:{shift_start_minutes%60:02d}",
+            real_dist_km=real_dist_total
         )
 
     # Fracture 6: Aggregate P&L for the whole plan
@@ -457,7 +432,11 @@ def _compute_archetype_plan(
             "start_time": t0_p2,
             "end_time": time.time()
         },
-        "reasoning_log": reasoning_log,
+        "reasoning_log": (
+            f"Arquetipo '{archetype}': {arch_legs} tramos reales evaluados. "
+            f"OPEX Distancia auditado: $ {agg_opex_dist:.2f} ARS. "
+            f"Phase2: {p2_time*1000:.0f}ms, Phase3: {p3_time*1000:.0f}ms."
+        ),
         "plan_financial_summary": {
             "total_expected_cost": round(agg_total, 2),
             "total_w_survival": round(total_w_survival, 4),
@@ -469,6 +448,7 @@ def _compute_archetype_plan(
             "fixed_costs_ars": round(agg_fixed, 2),
             "executive_variance_analysis": agg_variance,
             "costo_total_ars": round(agg_total, 2),
+            "distancia_km": sum(v.get("cost_breakdown", {}).get("distancia_km", 0) for v in plan),
             "costo_total_usd": round(agg_total / dolar_mep, 2)
         },
         "topology_visuals": {
@@ -477,19 +457,6 @@ def _compute_archetype_plan(
         }
     }
 
-    # Fracture 5: Build detailed cost breakdown for each assignment
-    for a_plan in plan:
-        # We need the full path of nodes for distance/tolls
-        # r_indices contains the RX indices of the route
-        path_nodes = a_plan["route_indices"]
-        a_plan["cost_breakdown"] = _calculate_cost_breakdown(
-            path_nodes, 
-            a_plan["schedule"], 
-            base_graph, 
-            client_cost_env,
-            departure_time or f"{shift_start_minutes//60:02d}:{shift_start_minutes%60:02d}"
-        )
-
     return archetype, plan_dict, legs_count, fallback_counter[0]
 
 def _haversine_path_km(path_rx, base_graph) -> float:
@@ -497,7 +464,6 @@ def _haversine_path_km(path_rx, base_graph) -> float:
     for i in range(len(path_rx) - 1):
         u_node = base_graph[path_rx[i]]
         v_node = base_graph[path_rx[i+1]]
-        # Simple haversine-like distance
         phi1, lam1 = math.radians(u_node.lat), math.radians(u_node.lon)
         phi2, lam2 = math.radians(v_node.lat), math.radians(v_node.lon)
         dphi = phi2 - phi1
@@ -509,8 +475,6 @@ def _haversine_path_km(path_rx, base_graph) -> float:
 
 def _detect_toll_crossings(path_nodes, plan_ref, base_graph, cost_env, departure_time) -> list:
     markers = []
-    # Identify unique toll edge crossings
-    # If plan_ref is provided, we use it for vehicle_id, else it's a generic path audit
     for i in range(len(path_nodes) - 1):
         u_idx, v_idx = path_nodes[i], path_nodes[i+1]
         try:
@@ -562,16 +526,15 @@ def _get_h3_polygons(node_set, threat_matrix) -> list:
                 continue
     return polygons
 
-def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_time_str) -> dict:
+def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_time_str, real_dist_km: float = None) -> dict:
     from src.api.schemas import CostBreakdown
     
-    # 1. Constants from Single Source of Truth
     gasoil = getattr(cost_env, "precio_gasoil_ars", 1865.0)
     l_por_km = getattr(cost_env, "consumo_l_por_km", 0.33)
     dolar_mep = getattr(cost_env, "dolar_mep_ars", 1415.52)
     viatico = 15671.16
 
-    dist_km = _haversine_path_km(path_nodes, base_graph)
+    dist_km = real_dist_km if real_dist_km is not None else _haversine_path_km(path_nodes, base_graph)
     
     if schedule and len(schedule) >= 2:
         dur_min = (schedule[-1]["suggested_arrival_min"] or 0) - (schedule[0]["suggested_arrival_min"] or 0)
@@ -579,36 +542,30 @@ def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_
         dur_min = 0
     dur_hr = max(dur_min, 0) / 60.0
     
-    # 2. Accounting Grouping (CFO-Grade)
-    # OPEX Distance: Fuel + Tires + Maint ($57 + $135.40/km)
     comb = dist_km * l_por_km * gasoil
     neum = dist_km * 57.00
     mant = dist_km * 135.40
     opex_dist = comb + neum + mant
 
-    # OPEX Time: Labor (CCT 40/89)
     lab = dur_hr * 12140.27
     opex_time = lab
 
-    # CAPEX Amortization: Depreciation + Insurance + Telemetry
     amort = dur_hr * 4234.84
     seg = dur_hr * 1818.18
     tele = dur_hr * 937.50
     capex_amort = amort + seg + tele
 
-    # Fixed Costs: Peajes + Viáticos
     peajes = _detect_toll_crossings(path_nodes, None, base_graph, cost_env, start_time_str)
     costo_peajes = sum(p.get("costo_ars", 0) for p in peajes)
     fixed_costs = costo_peajes + viatico
 
     total = opex_dist + opex_time + capex_amort + fixed_costs
 
-    # 3. Variance Analysis (Executive Summary)
     reasons = []
     if dur_hr > 0 and (dist_km / dur_hr) < 20:
-        reasons.append(f"Alerta: Baja velocidad comercial detectada ({dist_km/dur_hr:.1f} km/h). El OPEX de tiempo y CAPEX inmovilizado traccionan el alza en el Cost-to-Serve por arriba del promedio regional.")
+        reasons.append(f"Alerta: Baja velocidad comercial detectada ({dist_km/dur_hr:.1f} km/h).")
     if costo_peajes > 4000:
-        reasons.append("Anexo Peajes: El delta de flete está impactado por peajes dinámicos en accesos AMBA.")
+        reasons.append("Detalle: Impacto considerable de peajes en ruta real.")
 
     return CostBreakdown(
         distancia_km=round(dist_km, 2),

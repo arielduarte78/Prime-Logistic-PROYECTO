@@ -4,7 +4,7 @@ import { MapContainer, TileLayer, Polyline, Marker, Popup, Polygon } from 'react
 import L from 'leaflet';
 import { MAP_CONFIG } from '../constants/mapConfig';
 import { ARCHETYPES } from '../constants/archetypes';
-import { buildRouteFromWaypoints } from '../services/osrmService';
+
 import ArchetypeChip from './ArchetypeChip';
 import PdfExportButton from './PdfExportButton';
 
@@ -50,9 +50,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
   const plans = fleetResponse?.plans || {};
   const destinations = parsedPayload?.destinations || [];
 
-  // ─── OSRM state ───
-  const [snappedCoords, setSnappedCoords] = useState({});
-  const [isSnapping, setIsSnapping] = useState(false);
+
 
   // ─── Simulation state ───
   const [isSimulating, setIsSimulating] = useState(false);
@@ -116,20 +114,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
     return map;
   }, [plans, selectedArchetype]);
 
-  // ─── OSRM snap on demand per vehicle ───
-  useEffect(() => {
-    if (!selectedArchetype || !vehicleWaypoints.length) return;
-    vehicleWaypoints.forEach(vw => {
-      const key = `${selectedArchetype}-${vw.vehicleId}`;
-      if (key in snappedCoords) return;
-      if (!vw.hasRoute) return;
-      setSnappedCoords(prev => ({ ...prev, [key]: null }));
-      setIsSnapping(true);
-      buildRouteFromWaypoints(vw.waypoints)
-        .then(coords => setSnappedCoords(prev => ({ ...prev, [key]: coords })))
-        .finally(() => setIsSnapping(false));
-    });
-  }, [selectedArchetype, vehicleWaypoints]);
+
 
   // ─── Vehicle filter logic ───
   const toggleVehicle = (vehicleId) => {
@@ -162,12 +147,9 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
   // ─── Simulation ───
   const startSimulation = () => {
     const visibleRoutes = vehicleWaypoints.filter(vw => isVehicleVisible(vw.vehicleId));
-    const hasAny = visibleRoutes.some(vw => {
-      const key = `${selectedArchetype}-${vw.vehicleId}`;
-      const coords = snappedCoords[key];
-      return coords && coords.length >= 2;
-    });
+    const hasAny = visibleRoutes.some(vw => vw.assignment?.route_coordinates?.length >= 2);
     if (!hasAny) return;
+
     setIsSimulating(true);
     setSimPositions({});
     const totalDurationMs = 10000;
@@ -180,19 +162,25 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
       const progress = Math.min(elapsed / totalDurationMs, 1);
       const currentMinutes = startMinutes + Math.floor(progress * totalSimMinutes);
       setSimTime(`${String(Math.floor(currentMinutes / 60)).padStart(2, '0')}:${String(currentMinutes % 60).padStart(2, '0')}`);
+      
       const newPositions = {};
       visibleRoutes.forEach(vw => {
-        const key = `${selectedArchetype}-${vw.vehicleId}`;
-        const coords = snappedCoords[key];
+        const coords = vw.assignment?.route_coordinates;
         if (!coords || coords.length < 2) return;
         const idx = Math.min(Math.floor(progress * (coords.length - 1)), coords.length - 1);
         newPositions[vw.vehicleId] = { pos: coords[idx], color: vw.color };
       });
       setSimPositions(newPositions);
-      if (progress < 1) { animFrameRef.current = requestAnimationFrame(animate); }
-      else { setIsSimulating(false); setSimPositions({}); }
+
+      if (progress < 1) { 
+        animFrameRef.current = requestAnimationFrame(animate); 
+      } else { 
+        setIsSimulating(false); 
+        setSimPositions({}); 
+      }
     };
     animFrameRef.current = requestAnimationFrame(animate);
+
   };
 
   const stopSimulation = () => {
@@ -218,11 +206,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
           ))}
         </div>
         <div className="flex items-center gap-3">
-          {isSnapping && (
-            <span className="text-xs text-gray-400 flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-[#1F9D6A] animate-pulse" /> Trazando calles reales...
-            </span>
-          )}
+
           <button onClick={isSimulating ? stopSimulation : startSimulation}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
             style={{ background: isSimulating ? '#DC2626' : '#1F9D6A', color: 'white' }}>
@@ -258,52 +242,29 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
             style={{ height: '100%', width: '100%' }} className="z-0">
             <TileLayer url={MAP_CONFIG.tileUrl} attribution={MAP_CONFIG.attribution} />
 
-            {/* Per-vehicle polylines */}
-            {vehicleWaypoints
-              .filter(vw => isVehicleVisible(vw.vehicleId))
-              .map((vw) => {
-                const key = `${selectedArchetype}-${vw.vehicleId}`;
-                const coords = snappedCoords[key] && snappedCoords[key].length > 0
-                  ? snappedCoords[key]
-                  : vw.waypoints.map(w => [w.lat, w.lon]);
-                if (coords.length < 2) return null;
-                return (
-                  <React.Fragment key={vw.vehicleId}>
-                    <Polyline 
-                      key={`polyline-${selectedArchetype}-${vw.vehicleId}-${coords.length}`}
-                      positions={coords}
-                      pathOptions={{ color: '#000', weight: 9, opacity: 0.12, lineCap: 'round', lineJoin: 'round' }}
-                      smoothFactor={0.5} />
-                    <Polyline 
-                      key={`polyline-fg-${selectedArchetype}-${vw.vehicleId}-${coords.length}`}
-                      positions={coords}
-                      pathOptions={{ color: vw.color, weight: 5, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }}
-                      smoothFactor={0.5} />
-                  </React.Fragment>
-                );
-              })
-            }
-            {/* Pareto segments (Bug 1 Fix - Redraw on selectedArchetype change) */}
-            {(fleetResponse?.segments_pareto || []).map((segment, sIdx) => {
-              return (segment.pareto_solutions || [])
-                .filter(sol => sol.archetype === selectedArchetype)
-                .map((sol, solIdx) => {
-                  if (!sol.route_coordinates || sol.route_coordinates.length < 2) return null;
-                  return (
-                    <Polyline
-                      key={`pareto-${sIdx}-${solIdx}`}
-                      positions={sol.route_coordinates}
-                      pathOptions={{
-                        color: ARCHETYPES[selectedArchetype]?.color || '#6366F1',
-                        weight: 4,
-                        opacity: 0.4,
-                        dashArray: '5, 8'
-                      }}
-                      smoothFactor={1}
-                    />
-                  );
-                });
+            {/* TAREA 2: Sincronía Total con el Cerebro (Backend Coordinates) */}
+            {(plans[selectedArchetype]?.segments_pareto || []).map((segment, sIdx) => {
+              const solution = (segment.pareto_solutions || [])
+                .find(sol => sol.archetype === selectedArchetype);
+              
+              if (!solution?.route_coordinates || solution.route_coordinates.length < 2) return null;
+              
+              return (
+                <Polyline
+                  key={`route-segment-${selectedArchetype}-${sIdx}`}
+                  positions={solution.route_coordinates}
+                  pathOptions={{
+                    color: ARCHETYPES[selectedArchetype]?.color || '#0F172A',
+                    weight: 6,
+                    opacity: 1.0, // Opacidad total según directiva
+                    lineCap: 'round',
+                    lineJoin: 'round'
+                  }}
+                  smoothFactor={1}
+                />
+              );
             })}
+
 
             {/* Vehicle origins */}
             {(parsedPayload?.vehicles || []).map((v) => (

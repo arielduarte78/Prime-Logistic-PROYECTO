@@ -18,8 +18,8 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
   const totalCost = opex_dist + opex_time + capex + fixed;
   const totalDist = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.distancia_km || 0), 0);
 
-  // NaN Fix: Cost per KM safety (TAREA 2)
-  const costPerKm = totalDist > 0 ? (totalCost / totalDist) : 0;
+  // Formula Corrección Ejecutiva: opex_distancia / total_km
+  const costPerKm = totalDist > 0 ? (opex_dist / totalDist) : 0;
 
   const exportPDF = () => {
     const doc = new jsPDF();
