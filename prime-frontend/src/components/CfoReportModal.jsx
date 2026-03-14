@@ -4,8 +4,22 @@ import { X, FileText, Download, TrendingUp, DollarSign, Clock, ShieldCheck } fro
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 
-export default function CfoReportModal({ isOpen, onClose, breakdown, archetype }) {
+export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, currentPlan }) {
   if (!isOpen || !breakdown) return null;
+
+  // TAREA 2: Cálculo robusto desde currentPlan (Sincronía Total)
+  const assignments = currentPlan?.assignments || [];
+  
+  const opex_dist = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.opex_distance_ars || 0), 0);
+  const opex_time = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.opex_time_ars || 0), 0);
+  const capex = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.capex_amortization_ars || 0), 0);
+  const fixed = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.fixed_costs_ars || 0), 0);
+
+  const totalCost = opex_dist + opex_time + capex + fixed;
+  const totalDist = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.distancia_km || 0), 0);
+
+  // NaN Fix: Cost per KM safety (TAREA 2)
+  const costPerKm = totalDist > 0 ? (totalCost / totalDist) : 0;
 
   const exportPDF = () => {
     const doc = new jsPDF();
@@ -18,36 +32,35 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype }
     doc.setFontSize(10);
     doc.setTextColor(100);
     doc.text(`Arquetipo: ${archetype?.toUpperCase()} | Fecha: ${new Date().toLocaleDateString()}`, 14, 30);
-    doc.text(`División: Logística Terrestre AMBA`, 14, 35);
+    doc.text("División: Finanzas & Operaciones Logísticas", 14, 35);
 
-    // Executive Summary
+    // Executive Summary: Texto Exacto TAREA 2
     doc.setFontSize(14);
     doc.setTextColor(15, 23, 42);
     doc.text("Resumen Ejecutivo Estatutario", 14, 50);
-
+    
     doc.setFontSize(10);
     doc.setTextColor(80);
-    const summaryText = "El presente Estado de Resultados desglosa el Cost-to-Serve (CTS) en tres dimensiones de capital: 1) OPEX de Rodamiento (Variables por distancia), 2) OPEX Laboral y CAPEX Inmovilizado (Estructurales por tiempo), y 3) Costos Fijos por Ruta. El análisis de varianza expone el impacto financiero directo del tiempo ocioso y la fricción topológica sobre el margen operativo bruto.";
+    const summaryText = "Este Estado de Resultados desglosa el Costo Servido Total en tres dimensiones: 1) Gastos de Desplazamiento (Variables), 2) Personal y Estructura (Fijos por tiempo) y 3) Gastos fijos de la operación. La varianza expone la pérdida de margen operativo traccionada por ineficiencias de tráfico y tiempos de espera.";
     const splitSummary = doc.splitTextToSize(summaryText, 180);
     doc.text(splitSummary, 14, 58);
 
-    // P&L Table
+    // P&L Table (Corporate Terms)
     const tableBody = [
-      ['OPEX Rodamiento (Variables)', `$ ${breakdown.opex_distance_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${((breakdown.opex_distance_ars / breakdown.costo_total_ars) * 100).toFixed(1)}%`],
-      ['OPEX Laboral (Estructural)', `$ ${breakdown.opex_time_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${((breakdown.opex_time_ars / breakdown.costo_total_ars) * 100).toFixed(1)}%`],
-      ['CAPEX Amortización / Activos', `$ ${breakdown.capex_amortization_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${((breakdown.capex_amortization_ars / breakdown.costo_total_ars) * 100).toFixed(1)}%`],
-      ['Costos Fijos / Peajes', `$ ${breakdown.fixed_costs_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${((breakdown.fixed_costs_ars / breakdown.costo_total_ars) * 100).toFixed(1)}%`],
-      [{ content: 'TOTAL COST-TO-SERVE (CTS)', styles: { fontStyle: 'bold', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }, { content: `$ ${breakdown.costo_total_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, styles: { fontStyle: 'bold', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }, { content: '100.0%', styles: { fontStyle: 'bold', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }]
+      ['Gastos de Desplazamiento (Variables)', `$ ${opex_dist.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${((opex_dist / totalCost) * 100).toFixed(1)}%`],
+      ['Personal y Estructura (Fijos por tiempo)', `$ ${(opex_time + capex).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${(((opex_time + capex) / totalCost) * 100).toFixed(1)}%`],
+      ['Costos Fijos por Ruta', `$ ${fixed.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${((fixed / totalCost) * 100).toFixed(1)}%`],
+      [{ content: 'COSTO SERVIDO TOTAL (CTS)', styles: { fontStyle: 'bold', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }, { content: `$ ${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, styles: { fontStyle: 'bold', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }, { content: '100.0%', styles: { fontStyle: 'bold', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }]
     ];
 
     doc.autoTable({
       startY: 85,
-      head: [['Concepto P&L (CTS)', 'Monto (ARS)', 'Impacto %']],
+      head: [['Concepto P&L (CFO)', 'Monto (ARS)', 'Impacto %']],
       body: tableBody,
       theme: 'striped',
       headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
       styles: { fontSize: 10, cellPadding: 5 },
-      columnStyles: {
+      columnStyles: { 
         1: { halign: 'right' },
         2: { halign: 'right' }
       }
@@ -59,7 +72,7 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype }
     doc.setTextColor(150);
     doc.text("Generado por Abbey Audit Engine v2.0 - Reporte de Confianza Senior CFO", 14, finalY);
 
-    doc.save(`Abbey_CFO_Report_${archetype}_${Date.now()}.pdf`);
+    doc.save(`Abbey_CfoReport_${archetype}_${Date.now()}.pdf`);
   };
 
   return (
@@ -85,62 +98,57 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype }
           {/* Executive Summary Section */}
           <div className="space-y-6">
             <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-              <FileText size={14} className="text-emerald-500" /> Resumen Ejecutivo Estatutario
+              <FileText size={14} className="text-emerald-600" /> Resumen Ejecutivo Estatutario
             </div>
             <div className="relative">
-              <div className="absolute -left-4 top-0 bottom-0 w-1.5 bg-emerald-500 rounded-full" />
+              <div className="absolute -left-4 top-0 bottom-0 w-1.5 bg-emerald-600 rounded-full" />
               <p className="text-base font-medium leading-relaxed text-slate-600 pl-6 pr-10 py-2">
-                "El presente Estado de Resultados desglosa el Cost-to-Serve (CTS) en tres dimensiones de capital:
-                1) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">OPEX de Rodamiento</span> (Variables por distancia),
-                2) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">OPEX Laboral y CAPEX Inmovilizado</span> (Estructurales por tiempo), y
-                3) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Costos Fijos por Ruta</span>.
-                El análisis de varianza expone el impacto financiero directo del tiempo ocioso y la fricción topológica sobre el margen operativo bruto."
+                "Este Estado de Resultados desglosa el <span className="text-slate-900 font-bold">Costo Servido Total</span> en tres dimensiones: 
+                1) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Gastos de Desplazamiento (Variables)</span>, 
+                2) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Personal y Estructura (Fijos por tiempo)</span> y 
+                3) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Gastos fijos de la operación</span>. 
+                La varianza expone la pérdida de margen operativo traccionada por ineficiencias de tráfico y tiempos de espera."
               </p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-            {/* P&L Table */}
+             {/* P&L Table */}
             <div className="space-y-6">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                  <DollarSign size={14} className="text-emerald-500" /> Statement of Result
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-900">
+                  <DollarSign size={14} className="text-emerald-600" /> Statement of Result
                 </div>
-                <span className="text-[10px] font-bold text-slate-300 tabular-nums">SOURCE: FADEEAC/CCT40-89</span>
+                <span className="text-[10px] font-bold text-slate-300 tabular-nums uppercase">Audit Source: CFO Excel v2.0</span>
               </div>
               <div className="border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm ring-1 ring-slate-100">
                 <table className="w-full text-left border-collapse tabular-nums">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-100">
-                      <th className="p-5 text-[10px] font-black uppercase text-slate-400">P&L Item</th>
+                      <th className="p-5 text-[10px] font-black uppercase text-slate-400">Concepto P&L</th>
                       <th className="p-5 text-[10px] font-black uppercase text-slate-400 text-right">Monto (ARS)</th>
                       <th className="p-5 text-[10px] font-black uppercase text-slate-400 text-right">%</th>
                     </tr>
                   </thead>
-                  <tbody className="text-xs font-bold text-slate-700 font-mono">
+                  <tbody className="text-xs font-bold text-slate-700">
                     <tr className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="p-5">OPEX Distance</td>
-                      <td className="p-5 text-right">$ {breakdown.opex_distance_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="p-5 text-right text-slate-400">{((breakdown.opex_distance_ars / breakdown.costo_total_ars) * 100).toFixed(1)}%</td>
+                      <td className="p-5 text-slate-900">Gastos Desplazamiento</td>
+                      <td className="p-5 text-right font-black">$ {opex_dist.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="p-5 text-right text-slate-400">{((opex_dist/totalCost)*100).toFixed(1)}%</td>
                     </tr>
                     <tr className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="p-5">OPEX Labor</td>
-                      <td className="p-5 text-right">$ {breakdown.opex_time_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="p-5 text-right text-slate-400">{((breakdown.opex_time_ars / breakdown.costo_total_ars) * 100).toFixed(1)}%</td>
+                      <td className="p-5 text-slate-900">Personal y Estructura</td>
+                      <td className="p-5 text-right font-black">$ {(opex_time + capex).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="p-5 text-right text-slate-400">{(((opex_time + capex)/totalCost)*100).toFixed(1)}%</td>
                     </tr>
                     <tr className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="p-5">CAPEX Fixed</td>
-                      <td className="p-5 text-right">$ {breakdown.capex_amortization_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="p-5 text-right text-slate-400">{((breakdown.capex_amortization_ars / breakdown.costo_total_ars) * 100).toFixed(1)}%</td>
-                    </tr>
-                    <tr className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="p-5">Fixed & Tolls</td>
-                      <td className="p-5 text-right">$ {breakdown.fixed_costs_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                      <td className="p-5 text-right text-slate-400">{((breakdown.fixed_costs_ars / breakdown.costo_total_ars) * 100).toFixed(1)}%</td>
+                      <td className="p-5 text-slate-900">Costos Fijos por Ruta</td>
+                      <td className="p-5 text-right font-black">$ {fixed.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="p-5 text-right text-slate-400">{((fixed/totalCost)*100).toFixed(1)}%</td>
                     </tr>
                     <tr className="bg-slate-900 text-white leading-none">
-                      <td className="p-6 font-black uppercase tracking-tighter text-sm">Total CTS</td>
-                      <td className="p-6 text-right font-black text-sm">$ {breakdown.costo_total_ars?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="p-6 font-black uppercase tracking-tighter text-sm">Costo Servido Total</td>
+                      <td className="p-6 text-right font-black text-sm">$ {totalCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td className="p-6 text-right font-black text-sm">100%</td>
                     </tr>
                   </tbody>
@@ -150,14 +158,14 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype }
 
             {/* Variance & KPIs */}
             <div className="space-y-6">
-              <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                <ShieldCheck size={14} className="text-emerald-500" /> Variance Analysis
+             <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                <ShieldCheck size={14} className="text-emerald-600" /> Analítica de Varianza
               </div>
-
+              
               <div className="grid grid-cols-1 gap-4">
-                {breakdown.executive_variance_analysis?.map((rev, idx) => (
+                {(breakdown.executive_variance_analysis || []).map((rev, idx) => (
                   <div key={idx} className="p-5 bg-slate-50 border border-slate-200 rounded-3xl text-[11px] font-bold text-slate-700 flex items-start gap-4 transition-all hover:border-emerald-200 hover:bg-emerald-50/10 group">
-                    <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-400 group-hover:text-emerald-500 group-hover:border-emerald-200 transition-colors shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-400 group-hover:text-emerald-600 group-hover:border-emerald-200 transition-colors shrink-0 tabular-nums">
                       {idx + 1}
                     </div>
                     <div className="leading-relaxed">
@@ -168,20 +176,20 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype }
               </div>
 
               <div className="mt-6 p-6 bg-slate-900 rounded-[2rem] text-white space-y-4 shadow-xl shadow-slate-200">
-                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-white/30">
-                  <span>Performance Metrics</span>
-                  <TrendingUp size={12} />
-                </div>
-                <div className="flex items-end justify-between">
-                  <div>
-                    <span className="block text-[10px] font-bold text-emerald-400">Total USD (MEP)</span>
-                    <span className="text-2xl font-black tabular-nums">${breakdown.costo_total_usd?.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-                  </div>
-                  <div className="text-right">
-                    <span className="block text-[10px] font-bold text-white/30">Cost per KM</span>
-                    <span className="text-lg font-black text-white/80 tabular-nums">${(breakdown.costo_total_ars / breakdown.distancia_km).toFixed(0)}</span>
-                  </div>
-                </div>
+                 <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-white/30">
+                    <span>Executive Metrics</span>
+                    <TrendingUp size={12} />
+                 </div>
+                 <div className="flex items-end justify-between tabular-nums">
+                    <div>
+                      <span className="block text-[10px] font-bold text-emerald-500">Monto USD (MEP)</span>
+                      <span className="text-2xl font-black">${(totalCost / (breakdown.dolar_mep || 1415.52)).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-[10px] font-bold text-white/30">Costo por KM</span>
+                      <span className="text-lg font-black text-white/80">${costPerKm.toFixed(2)}</span>
+                    </div>
+                 </div>
               </div>
             </div>
           </div>
@@ -190,13 +198,13 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype }
         {/* Footer */}
         <div className="p-8 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em]">
-            <Clock size={16} /> Verified by Abbey Logic Engine • CFO v2.0
+            <Clock size={16} /> Verified by Abbey Logic Engine • Senior CFO Dashboard
           </div>
-          <button
+          <button 
             onClick={exportPDF}
             className="flex items-center gap-3 px-10 py-5 bg-slate-900 text-white rounded-[1.25rem] font-black text-xs uppercase tracking-[0.2em] hover:bg-black shadow-2xl transition-all hover:-translate-y-1 active:scale-95 group"
           >
-            <Download size={18} className="text-emerald-400 group-hover:animate-bounce" /> Export Office Report
+            <Download size={18} className="text-emerald-600 group-hover:animate-bounce" /> Export Senior Office Report
           </button>
         </div>
       </div>

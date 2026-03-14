@@ -59,7 +59,7 @@ export default function TechnicalDetail({ fleetResponse, selectedArchetype }) {
                             <span className="text-gray-500 flex items-center gap-2">
                               <span className="text-green-500">🟢</span> Salida desde base
                             </span>
-                            <span className="font-mono text-gray-400">00:00</span>
+                            <span className="font-mono text-gray-400">{departureTime || "08:00"}</span>
                           </div>
                           {/* Stops */}
                           {destinations.length === 0 ? (

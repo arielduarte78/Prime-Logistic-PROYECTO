@@ -405,7 +405,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                       <span className="text-sm text-gray-600 flex items-center gap-2">
                         <span className="text-green-500">🟢</span> Salida desde base
                       </span>
-                      <span className="text-sm font-mono text-gray-400">00:00</span>
+                      <span className="text-sm font-mono text-gray-400">{parsedPayload?.departure_time || "08:00"}</span>
                     </div>
                     {dests.length === 0 ? (
                       <div className="px-4 py-3 text-sm text-gray-400">Sin asignaciones</div>

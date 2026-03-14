@@ -50,7 +50,12 @@ Elegí una estrategia para ver el mapa de rutas:`}
       <div className="flex flex-wrap justify-center gap-3">
         {availableArchetypes.map(([key, arch]) => {
           const plan = plans[key];
-          const summary = plan?.plan_financial_summary;
+          const assignments = plan?.assignments || [];
+          
+          // TAREA 1: Cálculo dinámico de totales (Suma real de desgloses por vehículo)
+          const totalArchetypeCost = assignments.reduce((acc, curr) => 
+            acc + (curr.cost_breakdown?.costo_total_ars || 0), 0);
+          
           const isSelected = localSelected === key;
 
           return (
@@ -63,9 +68,9 @@ Elegí una estrategia para ver el mapa de rutas:`}
                 }}
                 isSelected={isSelected}
               />
-              {summary && (
-                <div className={`flex items-center gap-2 text-xs font-mono font-bold ${isSelected ? 'text-emerald-500' : 'text-gray-400 opacity-60'}`}>
-                  <span>${summary.total_expected_cost?.toLocaleString()} ARS</span>
+              {totalArchetypeCost > 0 && (
+                <div className={`flex items-center gap-2 text-[10px] font-mono font-bold tabular-nums ${isSelected ? 'text-emerald-600' : 'text-slate-400 opacity-60'}`}>
+                  <span>$ {totalArchetypeCost.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                 </div>
               )}
             </div>
@@ -110,7 +115,11 @@ Elegí una estrategia para ver el mapa de rutas:`}
       )}
 
       {/* Technical detail */}
-      <TechnicalDetail fleetResponse={fleetResponse} selectedArchetype={localSelected} />
+      <TechnicalDetail 
+        fleetResponse={fleetResponse} 
+        selectedArchetype={localSelected} 
+        departureTime={parsedPayload?.departure_time || "08:00"} 
+      />
 
       {/* CFO Audit Modal */}
       <CfoReportModal
@@ -118,6 +127,7 @@ Elegí una estrategia para ver el mapa de rutas:`}
         onClose={() => setIsCfoModalOpen(false)}
         breakdown={currentPlan.plan_financial_summary}
         archetype={localSelected}
+        currentPlan={currentPlan}
       />
     </div>
   );
