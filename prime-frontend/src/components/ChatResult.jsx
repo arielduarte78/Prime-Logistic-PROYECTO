@@ -49,8 +49,11 @@ Seleccione Estrategia de Auditoría:`}
       {/* Archetype chips with financial summary */}
       <div className="flex flex-wrap justify-center gap-3">
         {availableArchetypes.map(([key, arch]) => {
-          const planForThisChip = plans[key];
-          const totalCostForThisChip = planForThisChip?.plan_financial_summary?.total_expected_cost || 0;
+          // REFERENCIA DIRECTA AL PLAN DE LA ESTRATEGIA EN LA VUELTA DEL MAP
+          const planData = plans[key]; 
+          const totalArchetypeCost = planData?.assignments?.reduce((acc, curr) => 
+            acc + (curr.cost_breakdown?.costo_total_ars || 0), 0) || 0;
+          
           const isSelected = localSelected === key;
 
           return (
@@ -63,9 +66,9 @@ Seleccione Estrategia de Auditoría:`}
                 }}
                 isSelected={isSelected}
               />
-              {totalCostForThisChip > 0 && (
+              {totalArchetypeCost > 0 && (
                 <div className={`flex items-center gap-2 text-[10px] font-mono font-bold tabular-nums ${isSelected ? 'text-emerald-600' : 'text-slate-400 opacity-60'}`}>
-                  <span>$ {totalCostForThisChip.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                  <span>$ {totalArchetypeCost.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                 </div>
               )}
             </div>

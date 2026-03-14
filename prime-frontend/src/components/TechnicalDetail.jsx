@@ -4,7 +4,7 @@ import { ARCHETYPES } from '../constants/archetypes';
 
 export default function TechnicalDetail({ fleetResponse, selectedArchetype, departureTime }) {
   const [isOpen, setIsOpen] = useState(false);
-  if (!fleetResponse || !selectedArchetype || !fleetResponse.plans) return null;
+  if (!fleetResponse?.plans || !selectedArchetype) return null;
   
   const plan = fleetResponse.plans[selectedArchetype];
   if (!plan) return null;
