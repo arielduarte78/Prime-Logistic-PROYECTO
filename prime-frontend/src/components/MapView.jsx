@@ -278,6 +278,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                   </React.Fragment>
                 );
               })
+            }
             {/* Pareto segments (Bug 1 Fix) */}
             {(fleetResponse?.segments_pareto || []).map((segment, sIdx) => {
               return (segment.pareto_solutions || [])
