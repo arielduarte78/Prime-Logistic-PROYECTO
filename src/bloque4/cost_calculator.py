@@ -42,7 +42,7 @@ def compute_edge_cost(
     speed_profiles: dict,
     archetype: str
 ) -> tuple[float, bool]:
-    """Centralized financial logic for evaluating single edges under specific settings."""
+    """Centralized financial logic for evaluating single edges using CFO-Grade nested EconomicProfile."""
     if archetype == "tanque":
         lambda_cost, lambda_risk = 0.01, 0.99
     elif archetype == "apostador":
@@ -52,28 +52,47 @@ def compute_edge_cost(
     else:
         lambda_cost, lambda_risk = 1.0, 0.0
 
-    peaje_promedio_ars = cost_env.peaje_promedio_ars
-    c_km_ars = cost_env.c_km_ars
-    c_hora_ars = cost_env.c_hora_ars
-    vel_kmh = cost_env.velocidad_comercial_kmh
-    franquicia_ars = cost_env.franquicia_seguro_usd * cost_env.dolar_mep_ars
-    custodia_hora_ars = cost_env.custodia_hora_ars
+    # --- CFO Calculations (Refactor de Raíz) ---
+    opex = cost_env.opex_movil
+    personal = cost_env.personal
+    capex = cost_env.capex
+
+    # 1. Costo por KM (CKM)
+    c_km_ars = (opex.gasoil_ars_l * opex.consumo_l_km) + opex.neumaticos_km_ars + opex.mantenimiento_km_ars
+
+    # 2. Costo por Hora (CH)
+    c_lab = (personal.sueldo_basico_ars * personal.cargas_sociales_factor) + \
+            personal.bono_mensual_ars + \
+            (personal.viatico_dia_ars * 22) + \
+            personal.provision_sac_vacaciones_ars
+    ch_lab = c_lab / personal.jornada_mensual_hs
+
+    c_amort = (capex.valor_unidad_ars * (1 - capex.valor_recupero_pct)) / capex.vida_util_meses
+    ch_est = (c_amort + capex.seguros_patentes_mes_ars + capex.telemetria_mes_ars) / personal.jornada_mensual_hs
+    c_hora_ars = ch_lab + ch_est
+
+    # 3. Auxiliares
+    peaje_promedio_ars = getattr(cost_env, 'peaje_promedio_ars', 1200.0)
+    vel_kmh = getattr(cost_env, 'velocidad_comercial_kmh', 40.0)
+    dolar_mep = getattr(cost_env, 'dolar_mep_ars', 1420.0)
+    custodia_hora_ars = getattr(cost_env, 'custodia_hora_ars', 0.0)
+    franquicia_ars = getattr(cost_env, 'franquicia_seguro_usd', 1500.0) * dolar_mep
+    
     ruta_tipica_km = 10.0
 
-    # Riesgo
+    # --- Lógica de Riesgo ---
     if callable(getattr(judge, 'get_params', None)):
         beta_params = judge.get_params(u_rx, v_rx)
         alpha = beta_params.alpha
         beta = beta_params.beta
     else:
-        # Fallback de seguridad (no debería ocurrir en producción)
-        alpha = payload.alpha_prior
-        beta = payload.beta_prior
+        alpha = 100.0
+        beta = 3.0
 
     p_survival = alpha / (alpha + beta) if (alpha + beta) > 0 else 0.999999
     p_failure = 1.0 - p_survival
 
-    # Financiero
+    # --- Lógica Financiera ---
     dist_km = payload.length / 1000.0
     h3_parent = get_h3_parent(payload.h3_index)
     multiplier = get_velocity_multiplier(speed_profiles, payload.highway, h3_parent, departure_hour)
@@ -90,13 +109,13 @@ def compute_edge_cost(
     if payload.highway in {"motorway", "motorway_link", "trunk", "trunk_link"}:
         name_upper = payload.name.upper() if getattr(payload, 'name', None) else ""
         if "25 DE MAYO" in name_upper or "PERITO MORENO" in name_upper:
-            financial_cost_ars += cost_env.ausa_25_mayo_ars
+            financial_cost_ars += getattr(cost_env, 'ausa_25_mayo_ars', 1200.0)
         elif "PASEO DEL BAJO" in name_upper or "BAJO" in name_upper:
-            financial_cost_ars += cost_env.ausa_paseo_bajo_ars
+            financial_cost_ars += getattr(cost_env, 'ausa_paseo_bajo_ars', 1200.0)
         elif "PANAMERICANA" in name_upper or "ACCESO NORTE" in name_upper or "ACCESO OESTE" in name_upper:
-            financial_cost_ars += cost_env.acceso_norte_oeste_ars
+            financial_cost_ars += getattr(cost_env, 'acceso_norte_oeste_ars', 1300.0)
         elif "BUENOS AIRES - LA PLATA" in name_upper or "RICCHERI" in name_upper:
-            financial_cost_ars += cost_env.aubasa_sur_ars
+            financial_cost_ars += getattr(cost_env, 'aubasa_sur_ars', 900.0)
         else:
             ref_value = getattr(payload, 'ref', None)
             ref_cost = _get_toll_from_ref(ref_value, cost_env)
