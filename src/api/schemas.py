@@ -103,6 +103,8 @@ class CostBreakdown(BaseModel):
     opex_time_ars: float = 0.0
     capex_amortization_ars: float = 0.0
     fixed_costs_ars: float = 0.0
+    custodia_ars: float = 0.0
+    exposure_risk_ars: float = 0.0
     executive_variance_analysis: List[str] = []
 
     costo_total_ars: float

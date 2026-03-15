@@ -156,19 +156,28 @@ def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_
     ch_estructural = (amort_mensual + capex.seguros_patentes_mes_ars + capex.telemetria_mes_ars) / personal.jornada_mensual_hs
     capex_amort_total = dur_hr * ch_estructural
 
-    # ─── 4. Fijos & Peajes ───
+    # ─── 4. Fijos, Peajes, Custodia y Riesgo ───
     peajes = _detect_toll_crossings(path_nodes, None, base_graph, cost_env, start_time_str)
     costo_peajes = sum(p.get("costo_ars", 0) for p in peajes)
     viatico_total = personal.viatico_dia_ars
-    fixed_costs_total = costo_peajes + viatico_total
+    
+    # Custodia y Riesgo (Nuevas variables CFO)
+    vel_kmh = getattr(cost_env, 'velocidad_comercial_kmh', 40.0)
+    custodia_hr = getattr(cost_env, 'custodia_hora_ars', 0.0)
+    franquicia_usd = getattr(cost_env, 'franquicia_seguro_usd', 1500.0)
+    
+    total_custodia = dur_hr * custodia_hr # Simplificado para el reporte
+    # El riesgo se calcula como exposición probabilística (1% fallback de siniestralidad por ruta)
+    total_riesgo_exposicion = 0.01 * (franquicia_usd * dolar_mep) 
 
-    total_viaje_ars = opex_dist_total + opex_time_total + capex_amort_total + fixed_costs_total
+    fixed_costs_total = costo_peajes + viatico_total
+    total_viaje_ars = opex_dist_total + opex_time_total + capex_amort_total + fixed_costs_total + total_custodia + total_riesgo_exposicion
 
     reasons = []
     if wait_hr > 0.5:
         reasons.append(f"Inactividad operativa: {wait_hr:.1f} hrs de espera por ventanas horarias.")
-    if dur_hr > 0 and (dist_km / dur_hr) < 20:
-        reasons.append(f"Alerta: Baja velocidad comercial detectada ({dist_km/dur_hr:.1f} km/h).")
+    if dur_hr > 0 and (dist_km / dur_hr) < (vel_kmh * 0.6):
+        reasons.append(f"Alerta: Baja velocidad comercial detectada ({dist_km/dur_hr:.1f} km/h - Target: {vel_kmh}).")
     if costo_peajes > 4000:
         reasons.append("Detalle: Impacto considerable de peajes en ruta auditada.")
 
@@ -194,6 +203,8 @@ def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_
         opex_time_ars=round(opex_time_total, 2),
         capex_amortization_ars=round(capex_amort_total, 2),
         fixed_costs_ars=round(fixed_costs_total, 2),
+        custodia_ars=round(total_custodia, 2),
+        exposure_risk_ars=round(total_riesgo_exposicion, 2),
         executive_variance_analysis=reasons,
         costo_total_ars=round(total_viaje_ars, 2),
         costo_total_usd=round(total_viaje_ars / dolar_mep, 2),
@@ -301,17 +312,16 @@ def _compute_archetype_plan(
                 assigned_dest_indices.add(d_idx)
 
                 if step_idx < len(schedule):
-                    smin = schedule[step_idx]["suggested_arrival_min"]
-                    abs_min = (smin + v_shift_start) if smin is not None else None
+                    abs_min = schedule[step_idx]["suggested_arrival_min"]
                     v_schedule.append({
                         "destination_id": dest.id,
                         "suggested_arrival_min": abs_min,
-                        "earliest_arrival_min": (schedule[step_idx]["earliest_arrival_min"] + v_shift_start) if schedule[step_idx]["earliest_arrival_min"] is not None else None,
-                        "latest_arrival_min": (schedule[step_idx]["latest_arrival_min"] + v_shift_start) if schedule[step_idx]["latest_arrival_min"] is not None else None,
+                        "earliest_arrival_min": schedule[step_idx]["earliest_arrival_min"],
+                        "latest_arrival_min": schedule[step_idx]["latest_arrival_min"],
                         "suggested_arrival_hhmm": f"{abs_min // 60:02d}:{abs_min % 60:02d}" if abs_min is not None else None
                     })
-                    if smin is not None:
-                        last_arrival_min = smin
+                    if abs_min is not None:
+                        last_arrival_min = abs_min
 
         if v_destinations and len(route) >= 2:
             last_node_idx = route[-2] if route[-1] < V_rx_count else route[-1]
@@ -320,8 +330,7 @@ def _compute_archetype_plan(
                 return_travel = shared_time_matrix[last_node_idx][depot_idx]
                 if return_travel is not None and return_travel < 99999:
                     last_dest_service = int(v_destinations[-1].service_time_min) if v_destinations else 0
-                    return_min = last_arrival_min + last_dest_service + int(return_travel)
-                    abs_return = return_min + v_shift_start
+                    abs_return = last_arrival_min + last_dest_service + int(return_travel)
                     v_schedule.append({
                         "destination_id": "__RETURN_BASE__",
                         "is_return": True,
@@ -495,7 +504,9 @@ def _compute_archetype_plan(
     agg_opex_time = sum(v.get("cost_breakdown", {}).get("opex_time_ars", 0) for v in plan)
     agg_capex = sum(v.get("cost_breakdown", {}).get("capex_amortization_ars", 0) for v in plan)
     agg_fixed = sum(v.get("cost_breakdown", {}).get("fixed_costs_ars", 0) for v in plan)
-    agg_total = agg_opex_dist + agg_opex_time + agg_capex + agg_fixed
+    agg_custodia = sum(v.get("cost_breakdown", {}).get("custodia_ars", 0) for v in plan)
+    agg_exposure_risk = sum(v.get("cost_breakdown", {}).get("exposure_risk_ars", 0) for v in plan)
+    agg_total = agg_opex_dist + agg_opex_time + agg_capex + agg_fixed + agg_custodia + agg_exposure_risk
     agg_variance = []
     for v in plan:
         agg_variance.extend(v.get("cost_breakdown", {}).get("executive_variance_analysis", []))
@@ -527,6 +538,8 @@ def _compute_archetype_plan(
             "opex_time_ars": round(agg_opex_time, 2),
             "capex_amortization_ars": round(agg_capex, 2),
             "fixed_costs_ars": round(agg_fixed, 2),
+            "custodia_ars": round(agg_custodia, 2),
+            "exposure_risk_ars": round(agg_exposure_risk, 2),
             "executive_variance_analysis": agg_variance,
             "costo_total_ars": round(agg_total, 2),
             "distancia_km": sum(v.get("cost_breakdown", {}).get("distancia_km", 0) for v in plan),
