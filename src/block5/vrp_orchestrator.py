@@ -1,52 +1,25 @@
 # src/block5/vrp_orchestrator.py
-
 import time
-
 import logging
-
 from datetime import datetime
-
 from zoneinfo import ZoneInfo
-
 from typing import Dict, List, Any
-
 from fastapi import HTTPException
-
 import math
-
 import asyncio
-
 from concurrent.futures import ThreadPoolExecutor
 
-
-
 from src.api.schemas import FleetRequest, FleetResponse, ParetoResult
-
 from src.block5.cost_matrix_builder import build_dense_cost_matrix
-
 from src.block5.vrp_solver import solve_vrp
-
 from src.bloque1.duckdb_ingestor import get_nearest_node_osm_id
-
 from src.bloque4.rx_adapter import get_rx_idx_for_osm, build_legacy_graph
-
 from src.bloque4.multiobjective_engine import MultiObjectiveEngine
-
 from src.bloque4.pareto import ParetoFrontResult
-
-
 
 logger = logging.getLogger("VRP_Orchestrator")
 
-
-
-# Thread pool dedicado para paralelización de arquetipos
-
-# max_workers=4 porque nunca hay más de 4 arquetipos simultáneos
-
 _archetype_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="archetype")
-
-
 
 def _coord_distance_km(coords: list) -> float:
     if not coords or len(coords) < 2:
@@ -63,6 +36,179 @@ def _coord_distance_km(coords: list) -> float:
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
         total += 6371.0 * c
     return total
+
+def _haversine_path_km(path_rx, base_graph) -> float:
+    total_km = 0.0
+    for i in range(len(path_rx) - 1):
+        u_node = base_graph[path_rx[i]]
+        v_node = base_graph[path_rx[i+1]]
+        phi1, lam1 = math.radians(u_node.lat), math.radians(u_node.lon)
+        phi2, lam2 = math.radians(v_node.lat), math.radians(v_node.lon)
+        dphi = phi2 - phi1
+        dlam = lam2 - lam1
+        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        total_km += 6371.0 * c
+    return total_km
+
+def _detect_toll_crossings(path_nodes, plan_ref, base_graph, cost_env, departure_time) -> list:
+    markers = []
+    for i in range(len(path_nodes) - 1):
+        u_idx, v_idx = path_nodes[i], path_nodes[i+1]
+        try:
+            edge_payload = base_graph.get_edge_data(u_idx, v_idx)
+            if not edge_payload: continue
+            
+            name_upper = edge_payload.name.upper() if getattr(edge_payload, 'name', None) else ""
+            is_toll = False
+            toll_name = ""
+            cost = 0.0
+            
+            if "25 DE MAYO" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje AUSA 25 de Mayo", getattr(cost_env, "ausa_25_mayo_ars", 1200.0)
+            elif "PERITO MORENO" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje AUSA Perito Moreno", getattr(cost_env, "ausa_25_mayo_ars", 1200.0)
+            elif "ILLIA" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje AUSA Illia", getattr(cost_env, "ausa_paseo_bajo_ars", 900.0)
+            elif "ACCESO NORTE" in name_upper or "PANAMERICANA" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje Acceso Norte", getattr(cost_env, "acceso_norte_oeste_ars", 1300.0)
+            elif "ACCESO OESTE" in name_upper:
+                is_toll, toll_name, cost = True, "Peaje Acceso Oeste", getattr(cost_env, "acceso_norte_oeste_ars", 1300.0)
+            
+            if is_toll:
+                u_node = base_graph[u_idx]
+                markers.append({
+                    "lat": u_node.lat,
+                    "lon": u_node.lon,
+                    "name": toll_name,
+                    "costo_ars": cost,
+                    "vehicle_id": getattr(plan_ref, 'id', 'audit') if plan_ref else 'audit'
+                })
+        except:
+            continue
+    return markers
+
+def _get_h3_polygons(node_set, threat_matrix) -> list:
+    import h3
+    polygons = []
+    for h3_idx, mu in threat_matrix.items():
+        if mu > 1.1:
+            try:
+                boundary = h3.cell_to_boundary(h3_idx)
+                polygons.append({
+                    "h3_index": h3_idx,
+                    "intensity": mu,
+                    "boundary": [[float(lat), float(lon)] for lat, lon in boundary]
+                })
+            except:
+                continue
+    return polygons
+
+def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_time_str, real_dist_km: float = None, destinations_payload: list = None) -> dict:
+    from src.api.schemas import CostBreakdown
+    
+    # ─── Extraer Perfiles CFO (Seguro y anidado) ───
+    opex = getattr(cost_env, 'opex_movil', None)
+    if not opex: # Fallback de seguridad por si viene el modelo legacy
+        from src.api.schemas import EconomicProfile
+        ep = EconomicProfile()
+        opex = ep.opex_movil
+        personal = ep.personal
+        capex = ep.capex
+        dolar_mep = ep.dolar_mep_ars
+    else:
+        personal = cost_env.personal
+        capex = cost_env.capex
+        dolar_mep = cost_env.dolar_mep_ars
+
+    dist_km = real_dist_km if real_dist_km is not None else _haversine_path_km(path_nodes, base_graph)
+    
+    if schedule and len(schedule) >= 2:
+        dur_min = (schedule[-1]["suggested_arrival_min"] or 0) - (schedule[0]["suggested_arrival_min"] or 0)
+    else:
+        dur_min = 0
+    dur_hr = max(dur_min, 0) / 60.0
+
+    # ─── TAREA 5: Cálculo de Tiempos Muertos (Wait Time) ───
+    wait_min = 0
+    if schedule and destinations_payload:
+        dest_lookup = {d.id: d for d in destinations_payload}
+        for stop in schedule:
+            d_id = stop.get("destination_id")
+            if d_id and d_id in dest_lookup:
+                d_meta = dest_lookup[d_id]
+                arrival = stop.get("suggested_arrival_min")
+                tw_start = getattr(d_meta, "tw_start_min", 0)
+                if arrival is not None and arrival < tw_start:
+                    wait_min += (tw_start - arrival)
+    wait_hr = wait_min / 60.0
+    
+    # ─── 1. OPEX Móvil (Target: Costo/KM) ───
+    comb = dist_km * opex.consumo_l_km * opex.gasoil_ars_l
+    neum = dist_km * opex.neumaticos_km_ars
+    mant = dist_km * opex.mantenimiento_km_ars
+    opex_dist_total = comb + neum + mant
+    ckm_calculado = opex_dist_total / dist_km if dist_km > 0 else 0.0
+
+    # ─── 2. Personal & CH (Target: Costo/Hora - Parte Laboral) ───
+    costo_laboral_mensual = (personal.sueldo_basico_ars * personal.cargas_sociales_factor) + \
+                            personal.bono_mensual_ars + \
+                            (personal.viatico_dia_ars * 22) + \
+                            personal.provision_sac_vacaciones_ars
+    
+    ch_laboral = costo_laboral_mensual / personal.jornada_mensual_hs
+    opex_time_total = (dur_hr + wait_hr) * ch_laboral # El tiempo de espera penaliza el margen
+
+    # ─── 3. CAPEX & CH (Target: Costo/Hora - Parte Estructural) ───
+    amort_mensual = (capex.valor_unidad_ars * (1 - capex.valor_recupero_pct)) / capex.vida_util_meses
+    ch_estructural = (amort_mensual + capex.seguros_patentes_mes_ars + capex.telemetria_mes_ars) / personal.jornada_mensual_hs
+    capex_amort_total = dur_hr * ch_estructural
+
+    # ─── 4. Fijos & Peajes ───
+    peajes = _detect_toll_crossings(path_nodes, None, base_graph, cost_env, start_time_str)
+    costo_peajes = sum(p.get("costo_ars", 0) for p in peajes)
+    viatico_total = personal.viatico_dia_ars
+    fixed_costs_total = costo_peajes + viatico_total
+
+    total_viaje_ars = opex_dist_total + opex_time_total + capex_amort_total + fixed_costs_total
+
+    reasons = []
+    if wait_hr > 0.5:
+        reasons.append(f"Inactividad operativa: {wait_hr:.1f} hrs de espera por ventanas horarias.")
+    if dur_hr > 0 and (dist_km / dur_hr) < 20:
+        reasons.append(f"Alerta: Baja velocidad comercial detectada ({dist_km/dur_hr:.1f} km/h).")
+    if costo_peajes > 4000:
+        reasons.append("Detalle: Impacto considerable de peajes en ruta auditada.")
+
+    return CostBreakdown(
+        distancia_km=round(dist_km, 2),
+        consumo_litros=round(dist_km * opex.consumo_l_km, 2),
+        precio_gasoil_ars=round(opex.gasoil_ars_l, 2),
+        consumo_l_por_km=round(opex.consumo_l_km, 3),
+        costo_combustible_ars=round(comb, 2),
+        costo_neumaticos_ars=round(neum, 2),
+        costo_mantenimiento_ars=round(mant, 2),
+        ckm_total_ars=round(ckm_calculado, 2),
+        duracion_horas=round(dur_hr, 2),
+        costo_laboral_hora=round(ch_laboral, 2),
+        costo_amort_hora=round(amort_mensual / personal.jornada_mensual_hs, 2),
+        costo_seguros_hora=round(capex.seguros_patentes_mes_ars / personal.jornada_mensual_hs, 2),
+        costo_telemetria_hora=round(capex.telemetria_mes_ars / personal.jornada_mensual_hs, 2),
+        ch_total_ars=round(ch_laboral + ch_estructural, 2),
+        peajes_cruzados=peajes,
+        costo_peajes_ars=round(costo_peajes, 2),
+        viatico_ars=round(viatico_total, 2),
+        opex_distance_ars=round(opex_dist_total, 2),
+        opex_time_ars=round(opex_time_total, 2),
+        capex_amortization_ars=round(capex_amort_total, 2),
+        fixed_costs_ars=round(fixed_costs_total, 2),
+        executive_variance_analysis=reasons,
+        costo_total_ars=round(total_viaje_ars, 2),
+        costo_total_usd=round(total_viaje_ars / dolar_mep, 2),
+        dolar_mep=dolar_mep,
+        fuente_precios="CFO-Grade / Mar 2026 Audit"
+    ).model_dump()
+
 
 def _compute_archetype_plan(
     archetype: str,
@@ -87,13 +233,8 @@ def _compute_archetype_plan(
     shift_start_minutes: int = 480,
     departure_time: str = None
 ) -> tuple:
-    """
-    Función sincrónica pura para un arquetipo.
-    Retorna (archetype, plan_dict, legs_count, fallback_count).
-    Diseñada para correr en ThreadPoolExecutor.
-    """
+    
     fallback_counter = [0]
-    # Phase 2
     t0_p2 = time.time()
     cost_matrix, _ = build_dense_cost_matrix(
         base_graph, nodes_of_interest, archetype,
@@ -107,117 +248,76 @@ def _compute_archetype_plan(
     )
     p2_time = time.time() - t0_p2
 
-
-
-    # Phase 3
-
     t0_p3 = time.time()
-
     num_vehicles = sum(1 for _ in payload.vehicles)
-
     capacities = [v.capacity_tons for v in payload.vehicles]
-
     demands = [0.0] * num_vehicles + [d.demand_tons for d in payload.destinations]
 
-
-
     result = solve_vrp(
-
         cost_matrix=cost_matrix,
-
         vehicle_capacities=capacities,
-
         demands=demands,
-
         num_vehicles=num_vehicles,
-
         time_limit_seconds=payload.time_limit_seconds,
-
         time_matrix=shared_time_matrix,
-
         time_windows=time_windows if has_real_windows else None,
-
         service_times=service_times,
-
         max_shift_minutes_per_vehicle=max_shift_per_vehicle
-
     )
-
     p3_time = time.time() - t0_p3
 
-
-
     if not result:
-
         return archetype, {"error": "No viable fleet assignment found."}, 0, 0
 
-
-
     routes, schedules = result
-
     V_rx_count = num_vehicles
-
-
-
     plan = []
-
     assigned_dest_indices = set()
-
+    
     for v_idx, (route, schedule) in enumerate(zip(routes, schedules)):
+        v_input = payload.vehicles[v_idx]
+        
+        # Override Excel -> Global Fallback
+        v_shift_start = shift_start_minutes
+        if v_input.departure_time:
+            try:
+                h, m = map(int, v_input.departure_time.split(":"))
+                v_shift_start = h * 60 + m
+            except: pass
 
         v_destinations = []
-
         v_schedule = []
         last_arrival_min = 0
 
         for step_idx, node_idx in enumerate(route):
-
             if node_idx >= V_rx_count:
-
                 d_idx = node_idx - V_rx_count
-
                 dest = payload.destinations[d_idx]
-
                 v_destinations.append(dest)
-
                 assigned_dest_indices.add(d_idx)
 
                 if step_idx < len(schedule):
-
                     smin = schedule[step_idx]["suggested_arrival_min"]
-                    # Fracture 1: apply shift offset
-                    abs_min = (smin + shift_start_minutes) if smin is not None else None
-
+                    abs_min = (smin + v_shift_start) if smin is not None else None
                     v_schedule.append({
-
                         "destination_id": dest.id,
-
                         "suggested_arrival_min": abs_min,
-
-                        "earliest_arrival_min": (schedule[step_idx]["earliest_arrival_min"] + shift_start_minutes) if schedule[step_idx]["earliest_arrival_min"] is not None else None,
-
-                        "latest_arrival_min": (schedule[step_idx]["latest_arrival_min"] + shift_start_minutes) if schedule[step_idx]["latest_arrival_min"] is not None else None,
-
-                        "suggested_arrival_hhmm": (
-
-                            f"{abs_min // 60:02d}:{abs_min % 60:02d}" if abs_min is not None else None
-
-                        )
-
+                        "earliest_arrival_min": (schedule[step_idx]["earliest_arrival_min"] + v_shift_start) if schedule[step_idx]["earliest_arrival_min"] is not None else None,
+                        "latest_arrival_min": (schedule[step_idx]["latest_arrival_min"] + v_shift_start) if schedule[step_idx]["latest_arrival_min"] is not None else None,
+                        "suggested_arrival_hhmm": f"{abs_min // 60:02d}:{abs_min % 60:02d}" if abs_min is not None else None
                     })
                     if smin is not None:
                         last_arrival_min = smin
 
-        # Fracture 2: return-to-base
         if v_destinations and len(route) >= 2:
             last_node_idx = route[-2] if route[-1] < V_rx_count else route[-1]
-            depot_idx = v_idx  # vehicle's own depot
+            depot_idx = v_idx
             if last_node_idx < len(shared_time_matrix) and depot_idx < len(shared_time_matrix[last_node_idx]):
                 return_travel = shared_time_matrix[last_node_idx][depot_idx]
                 if return_travel is not None and return_travel < 99999:
                     last_dest_service = int(v_destinations[-1].service_time_min) if v_destinations else 0
                     return_min = last_arrival_min + last_dest_service + int(return_travel)
-                    abs_return = return_min + shift_start_minutes
+                    abs_return = return_min + v_shift_start
                     v_schedule.append({
                         "destination_id": "__RETURN_BASE__",
                         "is_return": True,
@@ -226,30 +326,20 @@ def _compute_archetype_plan(
                         "latest_arrival_min": None,
                         "suggested_arrival_hhmm": f"{abs_return // 60:02d}:{abs_return % 60:02d}"
                     })
-
+                    
         plan.append({
-
             "vehicle": payload.vehicles[v_idx],
-
             "route_destinations": v_destinations,
-
             "route_indices": route,
-
             "schedule": v_schedule
-
         })
-
-
 
     uncovered = [payload.destinations[i] for i in range(len(payload.destinations)) if i not in assigned_dest_indices]
 
-
-
-    # Phase 4 & Real Distance calculation
     legs_evaluations = []
     legs_count = 0
-    leg_real_distances = {} # (source_idx, target_idx) -> real_km
-    leg_coords = {} # (source_idx, target_idx) -> list
+    leg_real_distances = {}
+    leg_coords = {}
 
     for v_plan in plan:
         r_indices = v_plan["route_indices"]
@@ -264,7 +354,6 @@ def _compute_archetype_plan(
             s_rx = nodes_of_interest[source_idx]
             t_rx = nodes_of_interest[target_idx]
             
-            # Simple spatial bounding box for MultiObjective Engine
             s_node = base_graph[s_rx]
             t_node = base_graph[t_rx]
             lat_center = (s_node.lat + t_node.lat) / 2
@@ -335,16 +424,10 @@ def _compute_archetype_plan(
                 legs_evaluations.append({
                     "source_osm": rx_to_osm[s_rx],
                     "target_osm": rx_to_osm[t_rx],
-
                     "pareto_solutions": leg_sols
-
                 })
-
                 legs_count += 1
 
-
-
-    # Fracture 3: aggregate costs and reasoning from Pareto segments
     total_w_survival = 0.0
     total_w_cost = 0.0
     total_confidence = 0.0
@@ -359,7 +442,6 @@ def _compute_archetype_plan(
 
     avg_confidence = round(total_confidence / arch_legs, 1) if arch_legs > 0 else 0.0
 
-    # Calculate real road distance per assignment
     for a_plan in plan:
         r_indices = a_plan["route_indices"]
         real_dist_total = 0.0
@@ -368,7 +450,6 @@ def _compute_archetype_plan(
             source_idx = r_indices[step]
             target_idx = r_indices[step + 1]
             real_dist_total += leg_real_distances.get((source_idx, target_idx), 0.0)
-            # Extend coordinates avoiding duplicate points at junctions
             leg_c = leg_coords.get((source_idx, target_idx), [])
             if leg_c:
                 if not full_route_coords:
@@ -377,18 +458,8 @@ def _compute_archetype_plan(
                     full_route_coords.extend(leg_c[1:])
         
         a_plan["route_coordinates"] = full_route_coords
-    # Per-assignment financial metrics
-    for v_plan in plan:
-        n_dests = len(v_plan.get("route_destinations", []))
-        v_plan["financial_metrics"] = {
-            "assigned_destinations": n_dests,
-            "estimated_cost_share": round(total_w_cost / max(len(plan), 1), 2),
-        }
 
-    # Fracture 5: Build detailed cost breakdown for each assignment
     for a_plan in plan:
-        # We need the full path of nodes for distance/tolls
-        # r_indices contains the RX indices of the route
         path_nodes = a_plan["route_indices"]
         real_dist_total = 0.0
         for step in range(len(path_nodes) - 1):
@@ -396,16 +467,26 @@ def _compute_archetype_plan(
             target_idx = path_nodes[step + 1]
             real_dist_total += leg_real_distances.get((source_idx, target_idx), 0.0)
 
+        # Usar el horario de salida del camión para la hoja de ruta
+        v_input = a_plan["vehicle"]
+        v_shift_start = shift_start_minutes
+        if v_input.departure_time:
+            try:
+                h, m = map(int, v_input.departure_time.split(":"))
+                v_shift_start = h * 60 + m
+            except: pass
+        v_start_hhmm = f"{v_shift_start//60:02d}:{v_shift_start%60:02d}"
+
         a_plan["cost_breakdown"] = _calculate_cost_breakdown(
             path_nodes,
             a_plan["schedule"],
             base_graph,
             client_cost_env,
-            departure_time or f"{shift_start_minutes//60:02d}:{shift_start_minutes%60:02d}",
-            real_dist_km=real_dist_total
+            v_start_hhmm,
+            real_dist_km=real_dist_total,
+            destinations_payload=payload.destinations
         )
 
-    # Fracture 6: Aggregate P&L for the whole plan
     agg_opex_dist = sum(v.get("cost_breakdown", {}).get("opex_distance_ars", 0) for v in plan)
     agg_opex_time = sum(v.get("cost_breakdown", {}).get("opex_time_ars", 0) for v in plan)
     agg_capex = sum(v.get("cost_breakdown", {}).get("capex_amortization_ars", 0) for v in plan)
@@ -414,17 +495,13 @@ def _compute_archetype_plan(
     agg_variance = []
     for v in plan:
         agg_variance.extend(v.get("cost_breakdown", {}).get("executive_variance_analysis", []))
-    agg_variance = list(set(agg_variance))[:5] # Deduplicate and limit
+    agg_variance = list(set(agg_variance))[:5] 
 
-    # Retrieve dolar_mep from cost_env for aggregation
     dolar_mep = getattr(client_cost_env, "dolar_mep_ars", 1415.52)
 
     plan_dict = {
-
         "assignments": plan,
-
         "uncovered": uncovered,
-
         "segments_pareto": legs_evaluations,
         "metrics": {
             "phase2_time_ms": p2_time * 1000,
@@ -459,449 +536,126 @@ def _compute_archetype_plan(
 
     return archetype, plan_dict, legs_count, fallback_counter[0]
 
-def _haversine_path_km(path_rx, base_graph) -> float:
-    total_km = 0.0
-    for i in range(len(path_rx) - 1):
-        u_node = base_graph[path_rx[i]]
-        v_node = base_graph[path_rx[i+1]]
-        phi1, lam1 = math.radians(u_node.lat), math.radians(u_node.lon)
-        phi2, lam2 = math.radians(v_node.lat), math.radians(v_node.lon)
-        dphi = phi2 - phi1
-        dlam = lam2 - lam1
-        a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-        total_km += 6371.0 * c
-    return total_km
-
-def _detect_toll_crossings(path_nodes, plan_ref, base_graph, cost_env, departure_time) -> list:
-    markers = []
-    for i in range(len(path_nodes) - 1):
-        u_idx, v_idx = path_nodes[i], path_nodes[i+1]
-        try:
-            edge_payload = base_graph.get_edge_data(u_idx, v_idx)
-            if not edge_payload: continue
-            
-            name_upper = edge_payload.name.upper() if getattr(edge_payload, 'name', None) else ""
-            is_toll = False
-            toll_name = ""
-            cost = 0.0
-            
-            if "25 DE MAYO" in name_upper:
-                is_toll, toll_name, cost = True, "Peaje AUSA 25 de Mayo", getattr(cost_env, "ausa_25_mayo_ars", 1200.0)
-            elif "PERITO MORENO" in name_upper:
-                is_toll, toll_name, cost = True, "Peaje AUSA Perito Moreno", 1200.0
-            elif "ILLIA" in name_upper:
-                is_toll, toll_name, cost = True, "Peaje AUSA Illia", 900.0
-            elif "ACCESO NORTE" in name_upper or "PANAMERICANA" in name_upper:
-                is_toll, toll_name, cost = True, "Peaje Acceso Norte", getattr(cost_env, "acceso_norte_oeste_ars", 1300.0)
-            elif "ACCESO OESTE" in name_upper:
-                is_toll, toll_name, cost = True, "Peaje Acceso Oeste", 1300.0
-            
-            if is_toll:
-                u_node = base_graph[u_idx]
-                markers.append({
-                    "lat": u_node.lat,
-                    "lon": u_node.lon,
-                    "name": toll_name,
-                    "costo_ars": cost,
-                    "vehicle_id": getattr(plan_ref, 'id', 'audit') if plan_ref else 'audit'
-                })
-        except:
-            continue
-    return markers
-
-def _get_h3_polygons(node_set, threat_matrix) -> list:
-    import h3
-    polygons = []
-    for h3_idx, mu in threat_matrix.items():
-        if mu > 1.1:
-            try:
-                boundary = h3.cell_to_boundary(h3_idx)
-                polygons.append({
-                    "h3_index": h3_idx,
-                    "intensity": mu,
-                    "boundary": [[float(lat), float(lon)] for lat, lon in boundary]
-                })
-            except:
-                continue
-    return polygons
-
-def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_time_str, real_dist_km: float = None) -> dict:
-    from src.api.schemas import CostBreakdown
-    
-    gasoil = getattr(cost_env, "precio_gasoil_ars", 1865.0)
-    l_por_km = getattr(cost_env, "consumo_l_por_km", 0.33)
-    dolar_mep = getattr(cost_env, "dolar_mep_ars", 1415.52)
-    viatico = 15671.16
-
-    dist_km = real_dist_km if real_dist_km is not None else _haversine_path_km(path_nodes, base_graph)
-    
-    if schedule and len(schedule) >= 2:
-        dur_min = (schedule[-1]["suggested_arrival_min"] or 0) - (schedule[0]["suggested_arrival_min"] or 0)
-    else:
-        dur_min = 0
-    dur_hr = max(dur_min, 0) / 60.0
-    
-    comb = dist_km * l_por_km * gasoil
-    neum = dist_km * 57.00
-    mant = dist_km * 135.40
-    opex_dist = comb + neum + mant
-
-    lab = dur_hr * 12140.27
-    opex_time = lab
-
-    amort = dur_hr * 4234.84
-    seg = dur_hr * 1818.18
-    tele = dur_hr * 937.50
-    capex_amort = amort + seg + tele
-
-    peajes = _detect_toll_crossings(path_nodes, None, base_graph, cost_env, start_time_str)
-    costo_peajes = sum(p.get("costo_ars", 0) for p in peajes)
-    fixed_costs = costo_peajes + viatico
-
-    total = opex_dist + opex_time + capex_amort + fixed_costs
-
-    reasons = []
-    if dur_hr > 0 and (dist_km / dur_hr) < 20:
-        reasons.append(f"Alerta: Baja velocidad comercial detectada ({dist_km/dur_hr:.1f} km/h).")
-    if costo_peajes > 4000:
-        reasons.append("Detalle: Impacto considerable de peajes en ruta real.")
-
-    return CostBreakdown(
-        distancia_km=round(dist_km, 2),
-        consumo_litros=round(dist_km * l_por_km, 2),
-        costo_combustible_ars=round(comb, 2),
-        costo_neumaticos_ars=round(neum, 2),
-        costo_mantenimiento_ars=round(mant, 2),
-        duracion_horas=round(dur_hr, 2),
-        costo_laboral_hora=12140.27,
-        costo_amort_hora=4234.84,
-        costo_seguros_hora=1818.18,
-        costo_telemetria_hora=937.50,
-        costo_peajes_ars=round(costo_peajes, 2),
-        viatico_ars=round(viatico, 2),
-        opex_distance_ars=round(opex_dist, 2),
-        opex_time_ars=round(opex_time, 2),
-        capex_amortization_ars=round(capex_amort, 2),
-        fixed_costs_ars=round(fixed_costs, 2),
-        executive_variance_analysis=reasons,
-        costo_total_ars=round(total, 2),
-        costo_total_usd=round(total / dolar_mep, 2)
-    ).model_dump()
-
-
-
-
 
 async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
-
     t0_total = time.time()
-
     base_graph = request.app.state.base_graph
-
     osm_to_rx = request.app.state.osm_to_rx
-
     rx_to_osm = request.app.state.rx_to_osm
 
-    
-
-    # Resolver departure_hour para trafico dinamico
-
     if payload.departure_time:
-
         try:
-
             departure_hour = datetime.fromisoformat(payload.departure_time).hour
-
         except (ValueError, TypeError):
-
             try:
-
                 departure_hour = datetime.strptime(payload.departure_time, "%H:%M").hour
-
             except (ValueError, TypeError):
-
                 departure_hour = datetime.now(tz=ZoneInfo("America/Argentina/Buenos_Aires")).hour
-
     else:
-
         departure_hour = datetime.now(tz=ZoneInfo("America/Argentina/Buenos_Aires")).hour
 
-    
-
     speed_profiles = request.app.state.speed_profiles
-
     logger.info(f"VRP departure_hour resolved to {departure_hour}")
 
-    
-
-    # Selección de juez: standard vs premium (estocástico)
-
     judge = request.app.state.judge_premium if (
-
         payload.stochastic_mode and getattr(request.app.state, 'judge_premium', None) is not None
-
     ) else request.app.state.judge
 
-    
-
-    # --- PHASE 1 ---
-
-    # "Filter app.state.base_graph by bounding box using the NodePayload (lat/lon) already in memory."
-
-    logger.info("Phase 1: Bounding Box Filter directly from app.state.base_graph. DuckDB is NOT opened and read_parquet is NOT used.")
-
-    
-
+    logger.info("Phase 1: Bounding Box Filter directly from app.state.base_graph...")
     t0_p1 = time.time()
-
     min_lat = min(v.origin_lat for v in payload.vehicles)
-
     max_lat = max(v.origin_lat for v in payload.vehicles)
-
     min_lon = min(v.origin_lon for v in payload.vehicles)
-
     max_lon = max(v.origin_lon for v in payload.vehicles)
 
-    
-
     for d in payload.destinations:
-
         min_lat = min(min_lat, d.lat)
-
         max_lat = max(max_lat, d.lat)
-
         min_lon = min(min_lon, d.lon)
-
         max_lon = max(max_lon, d.lon)
 
-
-
-    # 15% Padding
-
     pad_lat = (max_lat - min_lat) * 0.15
-
     pad_lon = (max_lon - min_lon) * 0.15
-
-    
-
-    # Fallback if there's only one point or zero var
-
     if pad_lat == 0: pad_lat = 0.05
-
     if pad_lon == 0: pad_lon = 0.05
-
-    
-
     min_lat -= pad_lat
-
     max_lat += pad_lat
-
     min_lon -= pad_lon
-
     max_lon += pad_lon
 
-    
-
     spatial_index = request.app.state.spatial_index
-
     spatial_rx_indices = request.app.state.spatial_rx_indices
-
-    
-
-    # Buscar nodos dentro del bounding box usando query_ball_point
-
-    # radio en grados (~50km)
-
     center = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
-
     radius = max((max_lat - min_lat), (max_lon - min_lon))
-
     candidate_indices = spatial_index.query_ball_point(center, radius)
-
-    
-
     allowed_nodes = set([spatial_rx_indices[i] for i in candidate_indices])
 
-    
-
-    # Also need logic to ensure origins and destinations are in allowed_nodes
-
-    # Map vehicles & destinations to RX indices
-
     V_rx = []
-
     for v in payload.vehicles:
-
         osm_id = get_nearest_node_osm_id(v.origin_lat, v.origin_lon)
-
         rx_idx = get_rx_idx_for_osm(osm_to_rx, osm_id)
-
         if rx_idx is not None:
-
             V_rx.append(rx_idx)
-
             allowed_nodes.add(rx_idx)
-
         else:
-
             raise HTTPException(status_code=400, detail=f"Vehicle {v.id} origin node unreachable.")
 
-    
-
     D_rx = []
-
     for d in payload.destinations:
-
         osm_id = get_nearest_node_osm_id(d.lat, d.lon)
-
         rx_idx = get_rx_idx_for_osm(osm_to_rx, osm_id)
-
         if rx_idx is not None:
-
             D_rx.append(rx_idx)
-
             allowed_nodes.add(rx_idx)
-
         else:
-
             raise HTTPException(status_code=400, detail=f"Destination {d.id} root node unreachable.")
 
-            
-
-    # Count restricted edges in this subgraph 
-
-    # (Since graph obj has no direct count of induced subgraph without filtering, we just iterate or set it up)
-
-    # Note: Rustworkx has subgraph() but for memory safety we just calculate connections.
-
     total_edges_subgraph = len(allowed_nodes)
-
-    logger.info(f"Phase 1 complete in {(time.time() - t0_p1)*1000:.1f}ms. Total distinct nodes: {len(allowed_nodes)}, Nodos en subgrafo: {total_edges_subgraph}")
-
     
-
-    # Target archetypes (Excluding unicorn from Phase 2/3)
-
     available_archetypes = [a for a in payload.allowed_archetypes if a != "unicornio"]
-
     if not available_archetypes:
-
         available_archetypes = ["equilibrista"]
 
-    
-
-    # Result dictionary by archetype
-
     archetype_plans = {}
-
     total_phase4_legs = 0
-
     total_fallback_edges = 0
-
-    
-
     nodes_of_interest = V_rx + D_rx
 
-
-
-    # Subgrafo acotado para Phase 2 — misma técnica que Phase 4
-
-    # Radio basado en la diagonal total del conjunto de puntos
-
     all_lats = [base_graph[rx].lat for rx in nodes_of_interest]
-
     all_lons = [base_graph[rx].lon for rx in nodes_of_interest]
-
     p2_lat_center = (min(all_lats) + max(all_lats)) / 2
-
     p2_lon_center = (min(all_lons) + max(all_lons)) / 2
-
-    p2_diagonal = math.sqrt(
-
-        (max(all_lats) - min(all_lats))**2 +
-
-        (max(all_lons) - min(all_lons))**2
-
-    )
-
-    # Radio generoso: 0.8x diagonal + mínimo 0.15 grados (~15km)
-
-    # para garantizar rutas que rodean obstáculos urbanos
-
+    p2_diagonal = math.sqrt((max(all_lats) - min(all_lats))**2 + (max(all_lons) - min(all_lons))**2)
     p2_radius = max(p2_diagonal * 0.8, 0.15)
-
-
-
-    p2_candidates = spatial_index.query_ball_point(
-
-        [p2_lat_center, p2_lon_center], p2_radius
-
-    )
-
+    p2_candidates = spatial_index.query_ball_point([p2_lat_center, p2_lon_center], p2_radius)
     p2_subgraph_nodes = set(spatial_rx_indices[i] for i in p2_candidates)
-
-    # Garantizar que todos los nodos de interés estén incluidos
-
     p2_subgraph_nodes.update(nodes_of_interest)
 
-    logger.info(f"Phase 2 subgraph: {len(p2_subgraph_nodes):,} nodos (vs 185,112 total)")
-
-
-
-    client_cost_env = request.app.state.cost_settings
-
+    # ─── EXTRAER EL JSON DEL FRONTEND Y USARLO COMO COST ENV ───
     if payload.economic_profile:
-
-        override_dict = payload.economic_profile.model_dump(exclude_unset=True)
-
-        base_dict = client_cost_env.__dict__.copy()
-
-        base_dict.update(override_dict)
-
-        from src.config.settings import CostSettings
-
-        client_cost_env = CostSettings(**base_dict)
-
-
+        client_cost_env = payload.economic_profile
+    else:
+        from src.api.schemas import EconomicProfile
+        client_cost_env = EconomicProfile()
 
     from src.block5.cost_matrix_builder import build_time_matrix_only
-
     shared_time_matrix = build_time_matrix_only(
-
         base_graph, nodes_of_interest,
-
         client_cost_env, osm_to_rx, departure_hour, speed_profiles,
-
         node_filter=p2_subgraph_nodes
-
     )
 
-
-
-    # Construir ventanas horarias una sola vez también
-
     vehicle_windows = [(0, 1440)] * len(V_rx)
-
     dest_windows = [(int(d.tw_start_min), int(d.tw_end_min)) for d in payload.destinations]
-
     time_windows = vehicle_windows + dest_windows
-
     has_real_windows = any(tw != (0, 1440) for tw in dest_windows)
 
-
-
-        # Service times: 0 para vehículos (depósitos), service_time_min para destinos
     vehicle_service_times = [0] * len(V_rx)
     dest_service_times = [int(d.service_time_min) for d in payload.destinations]
     service_times = vehicle_service_times + dest_service_times
-
     max_shift_per_vehicle = [v.max_shift_minutes for v in payload.vehicles]
 
-    # Paralelizar arquetipos en thread pool
-    # OR-Tools y rustworkx liberan el GIL — ThreadPoolExecutor es suficiente
     loop = asyncio.get_event_loop()
-    
     archetype_futures = [
         loop.run_in_executor(
             _archetype_executor,
@@ -939,9 +693,7 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
         total_fallback_edges += fallback_count
         
     shift_limit_enforced = any(v.max_shift_minutes < 1440 for v in payload.vehicles)
-
     total_time_ms = (time.time() - t0_total) * 1000
-    
     has_real_windows = any(
         getattr(d, "tw_start_min", 0) != 0 or getattr(d, "tw_end_min", 1440) != 1440 
         for d in payload.destinations
