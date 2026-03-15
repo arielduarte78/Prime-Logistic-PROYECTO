@@ -24,23 +24,19 @@ export default function AppPage() {
     const [h, m] = (advConfig?.departure_time || "08:00").split(':').map(Number);
     const shiftMin = h * 60 + m;
 
+    // 🔥 EL FIX ESTÁ ACÁ: Pasamos el JSON anidado del CFO directo al Backend
     const finalPayload = {
       ...payload,
-      departure_time: advConfig?.departure_time,
+      departure_time: advConfig?.departure_time || "08:00",
       shift_start_minutes: shiftMin,
       stochastic_mode: advConfig?.stochastic_mode || false,
-      economic_profile: {
-        precio_gasoil_ars: advConfig?.precio_gasoil_ars,
-        tarifa_hora_ars: advConfig?.tarifa_hora_ars,
-        consumo_l_por_km: advConfig?.consumo_l_por_km,
-        dolar_mep_ars: advConfig?.dolar_mep,
-        factor_friccion: advConfig?.factor_friccion
-      }
+      economic_profile: advConfig?.economic_profile
     };
 
     setParsedPayload(finalPayload);
     setAppState('loading');
     setLoadingStart(Date.now());
+
     try {
       const response = await sendFleetRequest(finalPayload);
       setFleetResponse(response);
@@ -50,17 +46,17 @@ export default function AppPage() {
       if (user) {
         const firstPlan = Object.values(response.plans || {})[0] || {};
         const summary = firstPlan.plan_financial_summary || {};
-        
+
         await supabase.from('consultas').insert({
           user_id: user.id,
           n_vehiculos: finalPayload.vehicles.length,
           n_destinos: finalPayload.destinations.length,
-          archetypes: finalPayload.allowed_archetypes,
+          archetypes: finalPayload.allowed_archetypes || ["equilibrista"],
           response_json: response,
           shift_start_minutes: finalPayload.shift_start_minutes,
           departure_time: finalPayload.departure_time,
           costo_total_ars: summary.total_expected_cost || 0,
-          distancia_km: firstPlan.assignments?.[0]?.cost_breakdown?.distancia_km || 0
+          distancia_km: summary.distancia_km || 0
         });
       }
 
@@ -76,16 +72,16 @@ export default function AppPage() {
   const handleBackToResults = () => { setAppState('result'); };
 
   return (
-    <div id="app-page" className="min-h-screen bg-gray-50">
+    <div id="app-page" className="min-h-screen bg-slate-50">
       {appState !== 'map' && (
-        <header className="w-full px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
-          <a href="/" className="text-lg font-bold text-[#0F172A] tracking-tight hover:text-[#1F9D6A] transition-colors">
-            Abbey
+        <header className="w-full px-6 py-4 border-b border-slate-200 bg-white flex items-center justify-between shadow-sm">
+          <a href="/" className="text-xl font-black text-slate-900 tracking-tighter hover:text-emerald-600 transition-colors">
+            Abbey <span className="text-emerald-500">1.5</span>
           </a>
           <div className="flex items-center gap-4">
-            <span className="text-xs text-gray-400 hidden sm:block">{user?.email}</span>
+            <span className="text-xs font-bold text-slate-400 hidden sm:block">{user?.email}</span>
             <button onClick={signOut}
-              className="text-xs text-gray-400 hover:text-gray-700 transition-colors px-3 py-1.5 rounded-lg border border-gray-200 hover:border-gray-300">
+              className="text-xs font-bold text-slate-500 hover:text-slate-900 transition-colors px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50">
               Salir
             </button>
           </div>
@@ -93,18 +89,42 @@ export default function AppPage() {
       )}
 
       {appState === 'idle' && (
-        <div className="flex flex-col gap-4">
-          <AdvancedConfig onChange={setAdvConfig} />
-          <ExcelUploader onParsed={handleParsed} />
+        <div className="max-w-4xl mx-auto px-6 py-12">
+          <div className="mb-12 text-center">
+            <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-4">
+              Inteligencia de Márgenes Logísticos para el AMBA
+            </h1>
+            <p className="text-lg text-slate-600 font-medium mb-6">
+              Auditoría financiera y optimización de rutas basada en Unit Economics reales.
+            </p>
+            <p className="text-sm text-slate-500 max-w-2xl mx-auto leading-relaxed">
+              Abbey cruza simultáneamente exposición al riesgo, topología urbana (peajes) y fricción operativa.
+              Subí tu Excel de despachos, ajustá la matriz financiera y obtené un plan auditable CFO-Grade en segundos.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-10">
+            <AdvancedConfig onChange={setAdvConfig} />
+            <ExcelUploader onParsed={handleParsed} />
+          </div>
         </div>
       )}
       {appState === 'loading' && <LoadingState startTime={loadingStart} />}
       {appState === 'result' && (
-        <ChatResult fleetResponse={fleetResponse} parsedPayload={parsedPayload} onSelectArchetype={handleSelectArchetype} />
+        <ChatResult
+          fleetResponse={fleetResponse}
+          parsedPayload={parsedPayload}
+          onSelectArchetype={handleSelectArchetype}
+        />
       )}
       {appState === 'map' && (
-        <MapView fleetResponse={fleetResponse} selectedArchetype={selectedArchetype}
-          parsedPayload={parsedPayload} onChangeArchetype={handleChangeArchetype} onBack={handleBackToResults} />
+        <MapView
+          fleetResponse={fleetResponse}
+          selectedArchetype={selectedArchetype}
+          parsedPayload={parsedPayload}
+          onChangeArchetype={handleChangeArchetype}
+          onBack={handleBackToResults}
+        />
       )}
       {appState === 'error' && <ErrorState message={errorMessage} onRetry={handleRetry} />}
     </div>
