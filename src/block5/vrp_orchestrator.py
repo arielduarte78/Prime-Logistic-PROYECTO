@@ -664,7 +664,10 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
             self.ausa_paseo_bajo_ars = getattr(ep_obj, 'ausa_paseo_bajo_ars', 1200.0)
             self.acceso_norte_oeste_ars = getattr(ep_obj, 'acceso_norte_oeste_ars', 1300.0)
             self.aubasa_sur_ars = getattr(ep_obj, 'aubasa_sur_ars', 900.0)
-
+            self.velocidad_comercial_kmh = getattr(ep_obj, 'velocidad_comercial_kmh', 40.0)
+            self.peaje_promedio_ars = getattr(ep_obj, 'peaje_promedio_ars', 1200.0)
+            self.custodia_hora_ars = getattr(ep_obj, 'custodia_hora_ars', 0.0)
+            
     client_cost_env = LegacyCostEnvAdapter(ep)
     
 
