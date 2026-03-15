@@ -108,18 +108,10 @@ def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_
     from src.api.schemas import CostBreakdown
     
     # ─── Extraer Perfiles CFO (Seguro y anidado) ───
-    opex = getattr(cost_env, 'opex_movil', None)
-    if not opex: # Fallback de seguridad por si viene el modelo legacy
-        from src.api.schemas import EconomicProfile
-        ep = EconomicProfile()
-        opex = ep.opex_movil
-        personal = ep.personal
-        capex = ep.capex
-        dolar_mep = ep.dolar_mep_ars
-    else:
-        personal = cost_env.personal
-        capex = cost_env.capex
-        dolar_mep = cost_env.dolar_mep_ars
+    opex = cost_env.opex_movil
+    personal = cost_env.personal
+    capex = cost_env.capex
+    dolar_mep = getattr(cost_env, 'dolar_mep_ars', 1420.0)
 
     dist_km = real_dist_km if real_dist_km is not None else _haversine_path_km(path_nodes, base_graph)
     
@@ -631,46 +623,12 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
     p2_subgraph_nodes = set(spatial_rx_indices[i] for i in p2_candidates)
     p2_subgraph_nodes.update(nodes_of_interest)
 
-    # ─── EXTRAER EL JSON DEL FRONTEND Y USARLO COMO COST ENV ───
+    # ─── INYECCIÓN CFO DIRECTA ───
     if payload.economic_profile:
-        ep = payload.economic_profile
+        client_cost_env = payload.economic_profile
     else:
         from src.api.schemas import EconomicProfile
-        ep = EconomicProfile()
-        
-    # ADAPTADOR DE SEGURIDAD (Evita que el Bloque 4 crashee buscando variables viejas)
-    class LegacyCostEnvAdapter:
-        def __init__(self, ep_obj):
-            # Mantenemos la estructura anidada nueva para el desglose financiero de CFO
-            self.opex_movil = ep_obj.opex_movil
-            self.personal = ep_obj.personal
-            self.capex = ep_obj.capex
-            self.dolar_mep_ars = ep_obj.dolar_mep_ars
-            
-            # Variables planas legacy para que el motor de grafos no explote
-            self.precio_gasoil_ars = ep_obj.opex_movil.gasoil_ars_l
-            self.consumo_l_por_km = ep_obj.opex_movil.consumo_l_km
-            
-            # Calculamos la "tarifa_hora_ars" (CH) vieja sumando todo
-            c_lab = (ep_obj.personal.sueldo_basico_ars * ep_obj.personal.cargas_sociales_factor) + ep_obj.personal.bono_mensual_ars + (ep_obj.personal.viatico_dia_ars * 22) + ep_obj.personal.provision_sac_vacaciones_ars
-            ch_lab = c_lab / ep_obj.personal.jornada_mensual_hs
-            c_amort = (ep_obj.capex.valor_unidad_ars * (1 - ep_obj.capex.valor_recupero_pct)) / ep_obj.capex.vida_util_meses
-            ch_est = (c_amort + ep_obj.capex.seguros_patentes_mes_ars + ep_obj.capex.telemetria_mes_ars) / ep_obj.personal.jornada_mensual_hs
-            
-            self.tarifa_hora_ars = ch_lab + ch_est
-            
-            # Peajes
-            self.ausa_25_mayo_ars = getattr(ep_obj, 'ausa_25_mayo_ars', 1200.0)
-            self.ausa_paseo_bajo_ars = getattr(ep_obj, 'ausa_paseo_bajo_ars', 1200.0)
-            self.acceso_norte_oeste_ars = getattr(ep_obj, 'acceso_norte_oeste_ars', 1300.0)
-            self.aubasa_sur_ars = getattr(ep_obj, 'aubasa_sur_ars', 900.0)
-            self.velocidad_comercial_kmh = getattr(ep_obj, 'velocidad_comercial_kmh', 40.0)
-            self.peaje_promedio_ars = getattr(ep_obj, 'peaje_promedio_ars', 1200.0)
-            self.custodia_hora_ars = getattr(ep_obj, 'custodia_hora_ars', 0.0)
-            self.c_km_ars = (ep_obj.opex_movil.gasoil_ars_l * ep_obj.opex_movil.consumo_l_km) + ep_obj.opex_movil.neumaticos_km_ars + ep_obj.opex_movil.mantenimiento_km_ars
-            self.c_hora_ars = self.tarifa_hora_ars
-            
-    client_cost_env = LegacyCostEnvAdapter(ep)
+        client_cost_env = EconomicProfile()
     
 
     from src.block5.cost_matrix_builder import build_time_matrix_only

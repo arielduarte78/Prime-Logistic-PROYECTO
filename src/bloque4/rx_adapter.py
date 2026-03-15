@@ -65,10 +65,14 @@ def build_legacy_graph(
     
     logger.info("LazyEdgeView construido en %.2f ms | Nodos permitidos: %d", elapsed_ms, len(allowed_nodes))
     
+    # CFO Calculation for summary
+    opex = cost_env.opex_movil
+    c_km = (opex.gasoil_ars_l * opex.consumo_l_km) + opex.neumaticos_km_ars + opex.mantenimiento_km_ars
+
     financial_summary = {
         "avg_cost_per_edge_ars": avg_cost,
         "dolar_mep": cost_env.dolar_mep_ars,
-        "c_km_ars": cost_env.c_km_ars
+        "c_km_ars": c_km
     }
 
     return graph, config, financial_summary

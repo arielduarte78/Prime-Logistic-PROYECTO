@@ -37,6 +37,7 @@ class EconomicProfile(BaseModel):
     ausa_paseo_bajo_ars: float = 1200.0
     acceso_norte_oeste_ars: float = 1300.0
     aubasa_sur_ars: float = 900.0
+    franquicia_seguro_usd: float = 1500.0
 
 class VehicleInput(BaseModel):
     id: str = Field(..., pattern=r'^[a-zA-Z0-9_-]+$', max_length=50)
