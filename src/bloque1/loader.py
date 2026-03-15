@@ -152,6 +152,10 @@ class ExcelLoader:
                 payload["vehicle_id"] = str(row["vehicle_id"]).strip()
             if row.get("count") is not None and not bool(pd.isna(row.get("count", None))):
                 payload["count"] = int(row["count"])
+            if row.get("departure_time") is not None and not bool(pd.isna(row.get("departure_time"))):
+                payload["departure_time"] = str(row["departure_time"]).strip()
+            if row.get("overtime_cost_hr") is not None and not bool(pd.isna(row.get("overtime_cost_hr"))):
+                payload["overtime_cost_hr"] = float(row["overtime_cost_hr"])
 
             # Validar con el validador de Phase 1
             result = NetworkValidator.validate_fleet_record(payload)

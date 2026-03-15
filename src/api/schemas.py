@@ -2,25 +2,41 @@
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Dict, Any
 
+class OpexMovil(BaseModel):
+    gasoil_ars_l: float = 1865.0
+    consumo_l_km: float = 0.33
+    neumaticos_km_ars: float = 57.0
+    mantenimiento_km_ars: float = 135.4
+
+class PersonalProfile(BaseModel):
+    sueldo_basico_ars: float = 1007060.0
+    cargas_sociales_factor: float = 1.45
+    bono_mensual_ars: float = 210000.0
+    viatico_dia_ars: float = 15671.16
+    jornada_mensual_hs: float = 176.0
+    provision_sac_vacaciones_ars: float = 121686.0
+
+class CapexProfile(BaseModel):
+    valor_unidad_ars: float = 111800000.0
+    vida_util_meses: float = 120.0
+    valor_recupero_pct: float = 0.20
+    seguros_patentes_mes_ars: float = 320000.0
+    telemetria_mes_ars: float = 165000.0
+
 class EconomicProfile(BaseModel):
-    c_km_ars: Optional[float] = None
-    c_hora_ars: Optional[float] = None
-    franquicia_seguro_usd: Optional[float] = None
-    dolar_mep_ars: Optional[float] = None
-    velocidad_comercial_kmh: Optional[float] = None
-    peaje_promedio_ars: Optional[float] = None
-    custodia_hora_ars: Optional[float] = None
-    ausa_25_mayo_ars: Optional[float] = None
-    ausa_paseo_bajo_ars: Optional[float] = None
-    acceso_norte_oeste_ars: Optional[float] = None
-    aubasa_sur_ars: Optional[float] = None
+    opex_movil: OpexMovil = Field(default_factory=OpexMovil)
+    personal: PersonalProfile = Field(default_factory=PersonalProfile)
+    capex: CapexProfile = Field(default_factory=CapexProfile)
     
-    # Deep CFO Parameters
-    valor_unidad_ars: float = 85000000.0   # Precio de mercado camión 15t
-    alicuota_art: float = 0.045            # 4.5% sobre masa salarial
-    sueldo_base_ars: float = 850000.0      # Básico CCT 40/89 Camioneros
-    consumo_l_km: float = 0.33             # Stop-and-go AMBA
-    factor_amortizacion: float = 0.20      # 20% anual lineal
+    # Legacy / Aux fields (Defaults seguros para evitar crashes en sumas)
+    dolar_mep_ars: float = 1415.52
+    velocidad_comercial_kmh: float = 40.0
+    peaje_promedio_ars: float = 1200.0
+    custodia_hora_ars: float = 0.0
+    ausa_25_mayo_ars: float = 1200.0
+    ausa_paseo_bajo_ars: float = 1200.0
+    acceso_norte_oeste_ars: float = 1300.0
+    aubasa_sur_ars: float = 900.0
 
 class VehicleInput(BaseModel):
     id: str = Field(..., pattern=r'^[a-zA-Z0-9_-]+$', max_length=50)
@@ -28,6 +44,8 @@ class VehicleInput(BaseModel):
     origin_lon: float = Field(..., ge=-180.0, le=180.0)
     capacity_tons: float = Field(..., ge=0.0, le=1000.0)
     max_shift_minutes: int = Field(default=480, ge=60, le=1440)
+    departure_time: Optional[str] = None
+    overtime_cost_hr: Optional[float] = None
 
 class DestinationInput(BaseModel):
     id: str = Field(..., pattern=r'^[a-zA-Z0-9_-]+$', max_length=50)
@@ -37,6 +55,7 @@ class DestinationInput(BaseModel):
     tw_start_min: int = Field(default=0, ge=0, le=1440)
     tw_end_min: int = Field(default=1440, ge=0, le=1440)
     service_time_min: int = Field(default=0, ge=0, le=240)
+    referencia: Optional[str] = None
 
     @model_validator(mode='after')
     def validate_time_window(self):
@@ -59,41 +78,36 @@ class RouteRequest(BaseModel):
     economic_profile: Optional[EconomicProfile] = None
 
 class CostBreakdown(BaseModel):
-    # Componentes de CKM
     distancia_km: float
     consumo_litros: float
-    precio_gasoil_ars: float = 1865.0     # Ponderado Puma+Axion Mar 2026
-    consumo_l_por_km: float = 0.33        # Stop-and-go AMBA camión 15t
+    precio_gasoil_ars: float
+    consumo_l_por_km: float
     costo_combustible_ars: float
     costo_neumaticos_ars: float
     costo_mantenimiento_ars: float
-    ckm_total_ars: float = 807.85          # Costo por km total
+    ckm_total_ars: float
 
-    # Componentes de CH
     duracion_horas: float
-    costo_laboral_hora: float = 12140.27  # CCT 40/89 Mar 2026
-    costo_amort_hora: float = 4234.84     # CAPEX Atego 1721
-    costo_seguros_hora: float = 1818.18   # SSN Ene 2026 + patentes
-    costo_telemetria_hora: float = 937.50  # GPS+ADAS+vigilancia
-    ch_total_ars: float = 19130.79         # Costo por hora total
+    costo_laboral_hora: float
+    costo_amort_hora: float
+    costo_seguros_hora: float
+    costo_telemetria_hora: float
+    ch_total_ars: float
 
-    # Peajes dinámicos (TDVRP)
     peajes_cruzados: List[Dict[str, Any]] = []
     costo_peajes_ars: float
-    viatico_ars: float = 15671.16
+    viatico_ars: float
 
-    # --- CFO-Grade P&L Segments ---
-    opex_distance_ars: float = 0.0         # Combustible + Neumáticos + Mantenimiento
-    opex_time_ars: float = 0.0             # Laboral (Sueldo + Cargas + SAC/Vac)
-    capex_amortization_ars: float = 0.0    # Depreciación + Seguros + Patentes
-    fixed_costs_ars: float = 0.0           # Peajes + Viáticos
-    executive_variance_analysis: List[str] = [] # Justificaciones financieras
+    opex_distance_ars: float = 0.0
+    opex_time_ars: float = 0.0
+    capex_amortization_ars: float = 0.0
+    fixed_costs_ars: float = 0.0
+    executive_variance_analysis: List[str] = []
 
-    # Totales
     costo_total_ars: float
     costo_total_usd: float
-    dolar_mep: float = 1415.52             # MEP 13 Mar 2026
-    fuente_precios: str = "FADEEAC/AUSA/CCT40-89 Mar 2026"
+    dolar_mep: float = 1415.52
+    fuente_precios: str = "CFO-Grade / Mar 2026 Audit"
 
 class ParetoResult(BaseModel):
     archetype: str
@@ -128,4 +142,3 @@ class FleetResponse(BaseModel):
     plans: Dict[str, Any]
     time_windows_enforced: bool = False
     shift_limit_enforced: bool = False
-

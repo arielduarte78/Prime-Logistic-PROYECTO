@@ -443,6 +443,13 @@ class NetworkValidator:
                     res.normalized["count"] = cnt
                 else:
                     res.normalized["count"] = 1
+            if "departure_time" in data and data["departure_time"] is not None and not bool(pd.isna(data["departure_time"])):
+                res.normalized["departure_time"] = str(data["departure_time"]).strip()
+            if "overtime_cost_hr" in data and data["overtime_cost_hr"] is not None and not bool(pd.isna(data["overtime_cost_hr"])):
+                try:
+                    res.normalized["overtime_cost_hr"] = float(data["overtime_cost_hr"])
+                except (ValueError, TypeError):
+                    pass
 
         return res
 

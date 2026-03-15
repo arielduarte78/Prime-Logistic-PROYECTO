@@ -52,6 +52,8 @@ class FleetVehicle(SerializableMixin):
     allowed_stations: List[str]
     vehicle_id: Optional[str] = None
     count: int = 1
+    departure_time: Optional[str] = None
+    overtime_cost_hr: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
