@@ -245,6 +245,17 @@ def _compute_archetype_plan(
     capacities = [v.capacity_tons for v in payload.vehicles]
     demands = [0.0] * num_vehicles + [d.demand_tons for d in payload.destinations]
 
+    # Prioridad 0: Extraer horarios de salida reales para el VRP
+    v_start_times = []
+    for v_input in payload.vehicles:
+        v_shift_start = shift_start_minutes
+        if v_input.departure_time:
+            try:
+                h, m = map(int, v_input.departure_time.split(":"))
+                v_shift_start = h * 60 + m
+            except: pass
+        v_start_times.append(v_shift_start)
+
     result = solve_vrp(
         cost_matrix=cost_matrix,
         vehicle_capacities=capacities,
@@ -254,7 +265,8 @@ def _compute_archetype_plan(
         time_matrix=shared_time_matrix,
         time_windows=time_windows if has_real_windows else None,
         service_times=service_times,
-        max_shift_minutes_per_vehicle=max_shift_per_vehicle
+        max_shift_minutes_per_vehicle=max_shift_per_vehicle,
+        vehicle_start_times=v_start_times
     )
     p3_time = time.time() - t0_p3
 

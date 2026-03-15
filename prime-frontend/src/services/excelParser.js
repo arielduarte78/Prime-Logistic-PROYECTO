@@ -48,33 +48,50 @@ export function parseExcelToFleetPayload(buffer) {
     }
   }
 
-  // --- Build vehicles array with defaults ---
-  const vehicles = vehiculosRaw.map((row) => ({
-    id: String(row.id),
-    origin_lat: Number(row.origin_lat),
-    origin_lon: Number(row.origin_lon),
-    capacity_tons: Number(row.capacity_tons),
-    max_shift_minutes: row.max_shift_minutes != null
-      ? Number(row.max_shift_minutes)
-      : VEHICULOS_DEFAULTS.max_shift_minutes,
-  }));
+  // --- Build vehicles array with defaults and sanitization ---
+  const vehicles = vehiculosRaw.map((row) => {
+    // Prioridad 3: Sanitización de IDs
+    const sanitizedId = String(row.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    
+    return {
+      id: sanitizedId,
+      origin_lat: Number(row.origin_lat),
+      origin_lon: Number(row.origin_lon),
+      capacity_tons: Number(row.capacity_tons),
+      max_shift_minutes: row.max_shift_minutes != null
+        ? Number(row.max_shift_minutes)
+        : VEHICULOS_DEFAULTS.max_shift_minutes,
+      // Prioridad 2: Extracción Per-Vehicle
+      departure_time: row.horario_salida ? String(row.horario_salida) : null,
+      overtime_cost_hr: row.costo_hora_extra != null ? Number(row.costo_hora_extra) : null,
+    };
+  });
 
-  // --- Build destinations array with defaults ---
-  const destinations = destinosRaw.map((row) => ({
-    id: String(row.id),
-    lat: Number(row.lat),
-    lon: Number(row.lon),
-    demand_tons: Number(row.demand_tons),
-    service_time_min: row.service_time_min != null
-      ? Number(row.service_time_min)
-      : DESTINOS_DEFAULTS.service_time_min,
-    tw_start_min: row.tw_start_min != null
-      ? Number(row.tw_start_min)
-      : DESTINOS_DEFAULTS.tw_start_min,
-    tw_end_min: row.tw_end_min != null
-      ? Number(row.tw_end_min)
-      : DESTINOS_DEFAULTS.tw_end_min,
-  }));
+  // --- Build destinations array with defaults and validation ---
+  const destinations = destinosRaw.map((row) => {
+    // Prioridad 3: Sanitización de IDs
+    const sanitizedId = String(row.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+    
+    let tw_start = row.tw_start_min != null ? Number(row.tw_start_min) : DESTINOS_DEFAULTS.tw_start_min;
+    let tw_end = row.tw_end_min != null ? Number(row.tw_end_min) : DESTINOS_DEFAULTS.tw_end_min;
+    
+    // Prioridad 3b: Validación de contrato de ventanas
+    if (tw_end <= tw_start) {
+      tw_end = tw_start + 60;
+    }
+
+    return {
+      id: sanitizedId,
+      lat: Number(row.lat),
+      lon: Number(row.lon),
+      demand_tons: Number(row.demand_tons),
+      service_time_min: row.service_time_min != null
+        ? Number(row.service_time_min)
+        : DESTINOS_DEFAULTS.service_time_min,
+      tw_start_min: tw_start,
+      tw_end_min: tw_end,
+    };
+  });
 
   // --- AMBA bounding-box warnings (non-blocking) ---
   const warnings = [];
@@ -96,8 +113,8 @@ export function parseExcelToFleetPayload(buffer) {
     payload: {
       vehicles,
       destinations,
-      allowed_archetypes: ['tanque', 'apostador', 'equilibrista'],
-      time_limit_seconds: 10,
+      allowed_archetypes: ['tanque', 'apostador', 'equilibrista', 'unicornio'], // Prioridad Auditoría: Habilitamos Unicornio
+      time_limit_seconds: 15, // Aumentamos margen para flotas complejas
     },
     warnings,
   };

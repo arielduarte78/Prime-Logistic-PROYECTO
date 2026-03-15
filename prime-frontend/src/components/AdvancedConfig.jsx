@@ -41,6 +41,12 @@ const DEFAULTS = {
 
   mantenimiento_km_ars: 135.40,
 
+  // Prioridad 1: Riesgo Patrimonial y Fricción
+  velocidad_comercial_kmh: 40.0,
+  peaje_promedio_ars: 1200.0,
+  custodia_hora_ars: 0.0,
+  franquicia_seguro_usd: 1500.0,
+
   departure_time: "08:00",
   stochastic_mode: false
 };
@@ -199,7 +205,12 @@ export default function AdvancedConfig({ onChange }) {
         seguros_patentes_mes_ars: total_seguros_impuestos,
         telemetria_mes_ars: total_telemetria_generales
       },
-      dolar_mep_ars: c.dolar_mep
+      // Prioridad 1: Inyección en la raíz del objeto según directiva
+      dolar_mep_ars: c.dolar_mep,
+      velocidad_comercial_kmh: c.velocidad_comercial_kmh,
+      peaje_promedio_ars: c.peaje_promedio_ars,
+      custodia_hora_ars: c.custodia_hora_ars,
+      franquicia_seguro_usd: c.franquicia_seguro_usd
     };
 
     return {
@@ -337,6 +348,12 @@ export default function AdvancedConfig({ onChange }) {
 
               <SectionHeader title="SECCIÓN G — MANTENIMIENTO" subtitle="Correctivo + Preventivo Programado" />
               <EditableRow label="Mantenimiento Integral x KM" value={config.mantenimiento_km_ars} onChange={(v) => update('mantenimiento_km_ars', v)} unit="ARS/km" />
+
+              <SectionHeader title="SECCIÓN H — RIESGO PATRIMONIAL Y FRICCIÓN" subtitle="Auditoría de Exposición y Velocidad de Servicio" />
+              <EditableRow label="Velocidad Comercial Promedio" value={config.velocidad_comercial_kmh} onChange={(v) => update('velocidad_comercial_kmh', v)} format="number" unit="km/h" />
+              <EditableRow label="Costo Peaje Promedio" value={config.peaje_promedio_ars} onChange={(v) => update('peaje_promedio_ars', v)} unit="ARS/ruta" />
+              <EditableRow label="Tarifa Custodia por Hora" value={config.custodia_hora_ars} onChange={(v) => update('custodia_hora_ars', v)} unit="ARS/h" />
+              <EditableRow label="Franquicia de Seguro (Deducible)" value={config.franquicia_seguro_usd} onChange={(v) => update('franquicia_seguro_usd', v)} unit="USD" />
             </div>
 
           </div>

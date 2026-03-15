@@ -17,31 +17,24 @@ def solve_vrp(
     time_matrix: Optional[List[List[int]]] = None,
     time_windows: Optional[List[Tuple[int, int]]] = None,
     service_times: Optional[List[int]] = None,
-    max_shift_minutes_per_vehicle: Optional[List[int]] = None
+    max_shift_minutes_per_vehicle: Optional[List[int]] = None,
+    vehicle_start_times: Optional[List[int]] = None
 ) -> Optional[Tuple[List[List[int]], List[List[Dict]]]]:
     """
     Retorna (routes, schedules).
     routes: lista de rutas por vehículo (índices de nodos).
     schedules: lista de cronogramas por vehículo.
-      Cada cronograma es una lista de dicts por parada:
-      {
-        "node_index": int,
-        "earliest_arrival_min": int,
-        "latest_arrival_min": int,
-        "suggested_arrival_min": int  # = earliest (OR-Tools optimiza hacia mínimo)
-      }
     """
     logger.info(f"OR-Tools invoked with {len(cost_matrix)} matrix size, {num_vehicles} vehicles.")
     
     manager = pywrapcp.RoutingIndexManager(
         len(cost_matrix),
         num_vehicles,
-        list(range(num_vehicles)),  # Starts are indices 0 to num_vehicles-1
-        list(range(num_vehicles))   # Ends are also their own starts
+        list(range(num_vehicles)),
+        list(range(num_vehicles))
     )
     routing = pywrapcp.RoutingModel(manager)
 
-    # Cost Matrix Callback
     def distance_callback(from_index, to_index):
         from_node = manager.IndexToNode(from_index)
         to_node = manager.IndexToNode(to_index)
@@ -59,11 +52,13 @@ def solve_vrp(
         max_shift_minutes_per_vehicle is not None and
         any(limit < 1440 for limit in max_shift_minutes_per_vehicle)
     )
+    has_starts = vehicle_start_times is not None
+    
     needs_time_dimension = (
         time_windows is not None and
         time_matrix is not None and
         any(tw != (0, 1440) for tw in time_windows)
-    ) or has_service_times or has_shift_limits
+    ) or has_service_times or has_shift_limits or has_starts
 
     if needs_time_dimension and time_matrix is not None:
         def time_callback(from_index: int, to_index: int) -> int:
@@ -76,27 +71,32 @@ def solve_vrp(
         transit_time_idx = routing.RegisterTransitCallback(time_callback)
         routing.AddDimension(
             transit_time_idx,
-            1400,   # slack
-            1440,  # horizonte: 24h
-            False, # salida óptima
+            1440,   # slack (permitir esperas hasta fin de jornada)
+            1440,   # horizonte: 24h absoluto
+            False,  # NO forzar inicio en cero (permite SetValue abajo)
             "Time"
         )
         time_dimension = routing.GetDimensionOrDie("Time")
 
+        # Prioridad 0: Sincronía Temporal absoluta
+        for vehicle_id in range(num_vehicles):
+            start_min = vehicle_start_times[vehicle_id] if vehicle_start_times and vehicle_id < len(vehicle_start_times) else 0
+            start_index = routing.Start(vehicle_id)
+            time_dimension.CumulVar(start_index).SetValue(start_min)
+            
+            # Límite de jornada: start + shift
+            if max_shift_minutes_per_vehicle:
+                max_shift = max_shift_minutes_per_vehicle[vehicle_id] if vehicle_id < len(max_shift_minutes_per_vehicle) else 480
+                end_index = routing.End(vehicle_id)
+                time_dimension.CumulVar(end_index).SetMax(start_min + max_shift)
+
         if time_windows:
             for node_idx, (tw_start, tw_end) in enumerate(time_windows):
                 if tw_start == 0 and tw_end == 1440:
-                    continue  # ventana abierta, sin restricción
+                    continue 
                 index = manager.NodeToIndex(node_idx)
                 if index >= 0:
                     time_dimension.CumulVar(index).SetRange(tw_start, tw_end)
-                    
-        # Límite de jornada por vehículo
-        if max_shift_minutes_per_vehicle:
-            for vehicle_id in range(num_vehicles):
-                max_shift = max_shift_minutes_per_vehicle[vehicle_id] if vehicle_id < len(max_shift_minutes_per_vehicle) else 480
-                end_index = routing.End(vehicle_id)
-                time_dimension.CumulVar(end_index).SetMax(max_shift)
     
     # Capacity Variables Callback (scaled to integers)
     int_demands = [int(v * 1000) for v in demands]
