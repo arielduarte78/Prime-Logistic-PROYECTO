@@ -667,6 +667,7 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
             self.velocidad_comercial_kmh = getattr(ep_obj, 'velocidad_comercial_kmh', 40.0)
             self.peaje_promedio_ars = getattr(ep_obj, 'peaje_promedio_ars', 1200.0)
             self.custodia_hora_ars = getattr(ep_obj, 'custodia_hora_ars', 0.0)
+            self.c_km_ars = (ep_obj.opex_movil.gasoil_ars_l * ep_obj.opex_movil.consumo_l_km) + ep_obj.opex_movil.neumaticos_km_ars + ep_obj.opex_movil.mantenimiento_km_ars
             
     client_cost_env = LegacyCostEnvAdapter(ep)
     
