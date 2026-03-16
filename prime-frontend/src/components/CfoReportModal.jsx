@@ -14,8 +14,12 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
   const opex_time = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.opex_time_ars || 0), 0);
   const capex = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.capex_amortization_ars || 0), 0);
   const fixed = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.fixed_costs_ars || 0), 0);
+  const risk = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.exposure_risk_ars || 0), 0);
+  const custody = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.custodia_ars || 0), 0);
+  const riskCustody = risk + custody;
 
-  const totalCost = opex_dist + opex_time + capex + fixed;
+  // Control de Integridad: Usamos el total directo del motor CFO
+  const totalCost = breakdown.costo_total_ars || (opex_dist + opex_time + capex + fixed + riskCustody);
   const totalDist = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.distancia_km || 0), 0);
 
   // Formula Corrección Ejecutiva: opex_distancia / total_km
@@ -41,7 +45,7 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
     
     doc.setFontSize(10);
     doc.setTextColor(80);
-    const summaryText = "Este Estado de Resultados desglosa el Costo Servido Total en tres dimensiones: 1) Gastos de Desplazamiento (Variables), 2) Personal y Estructura (Fijos por tiempo) y 3) Gastos fijos de la operación. La varianza expone la pérdida de margen operativo traccionada por ineficiencias de tráfico y tiempos de espera.";
+    const summaryText = "Este Estado de Resultados desglosa el Costo Servido Total en cuatro dimensiones: 1) Gastos de Desplazamiento (Variables), 2) Personal y Estructura (Fijos por tiempo), 3) Gastos fijos de la operación y 4) Riesgo Patrimonial y Custodia. La varianza expone la pérdida de margen operativo traccionada por ineficiencias de tráfico y exposición al siniestro.";
     const splitSummary = doc.splitTextToSize(summaryText, 180);
     doc.text(splitSummary, 14, 58);
 
@@ -50,6 +54,7 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
       ['Gastos de Desplazamiento (Variables)', `$ ${opex_dist.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${((opex_dist / totalCost) * 100).toFixed(1)}%`],
       ['Personal y Estructura (Fijos por tiempo)', `$ ${(opex_time + capex).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${(((opex_time + capex) / totalCost) * 100).toFixed(1)}%`],
       ['Costos Fijos por Ruta', `$ ${fixed.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${((fixed / totalCost) * 100).toFixed(1)}%`],
+      ['Riesgo Patrimonial y Custodia', `$ ${riskCustody.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, `${((riskCustody / totalCost) * 100).toFixed(1)}%`],
       [{ content: 'COSTO SERVIDO TOTAL (CTS)', styles: { fontStyle: 'bold', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }, { content: `$ ${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, styles: { fontStyle: 'bold', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }, { content: '100.0%', styles: { fontStyle: 'bold', fillColor: [15, 23, 42], textColor: [255, 255, 255] } }]
     ];
 
@@ -103,11 +108,12 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
             <div className="relative">
               <div className="absolute -left-4 top-0 bottom-0 w-1.5 bg-emerald-600 rounded-full" />
               <p className="text-base font-medium leading-relaxed text-slate-600 pl-6 pr-10 py-2">
-                "Este Estado de Resultados desglosa el <span className="text-slate-900 font-bold">Costo Servido Total</span> en tres dimensiones: 
+                "Este Estado de Resultados desglosa el <span className="text-slate-900 font-bold">Costo Servido Total</span> en cuatro dimensiones: 
                 1) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Gastos de Desplazamiento (Variables)</span>, 
-                2) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Personal y Estructura (Fijos por tiempo)</span> y 
-                3) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Gastos fijos de la operación</span>. 
-                La varianza expone la pérdida de margen operativo traccionada por ineficiencias de tráfico y tiempos de espera."
+                2) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Personal y Estructura (Fijos por tiempo)</span>, 
+                3) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Gastos fijos de la operación</span> y 
+                4) <span className="text-slate-900 font-bold underline decoration-emerald-500/30 decoration-4">Riesgo Patrimonial y Custodia</span>. 
+                La varianza expone la pérdida de margen operativo traccionada por ineficiencias de tráfico y exposición al siniestro."
               </p>
             </div>
           </div>
@@ -145,6 +151,11 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
                       <td className="p-5 text-slate-900">Costos Fijos por Ruta</td>
                       <td className="p-5 text-right font-black">$ {fixed.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                       <td className="p-5 text-right text-slate-400">{((fixed/totalCost)*100).toFixed(1)}%</td>
+                    </tr>
+                    <tr className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                      <td className="p-5 text-slate-900">Riesgo Patrimonial y Custodia</td>
+                      <td className="p-5 text-right font-black">$ {riskCustody.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td className="p-5 text-right text-slate-400">{((riskCustody/totalCost)*100).toFixed(1)}%</td>
                     </tr>
                     <tr className="bg-slate-900 text-white leading-none">
                       <td className="p-6 font-black uppercase tracking-tighter text-sm">Costo Servido Total</td>
