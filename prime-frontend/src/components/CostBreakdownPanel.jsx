@@ -8,6 +8,7 @@ const CostBreakdownPanel = ({ breakdown }) => {
     { label: 'Gastos de Desplazamiento', value: breakdown.costo_combustible_ars + breakdown.costo_neumaticos_ars + breakdown.costo_mantenimiento_ars, detail: 'Combustible, Neumáticos, Mantenimiento', icon: '⛽' },
     { label: 'Personal y Estructura', value: (breakdown.costo_laboral_hora + breakdown.costo_amort_hora + breakdown.costo_seguros_hora + breakdown.costo_telemetria_hora) * breakdown.duracion_horas, detail: 'CCT 40/89, CAPEX, Seguros, Telemetría', icon: '👷' },
     { label: 'Gastos Fijos de la Operación', value: breakdown.fixed_costs_ars, detail: 'Peajes, Viáticos, Varios', icon: '🛣️' },
+    { label: 'Riesgo Patrimonial y Custodia', value: (breakdown.exposure_risk_ars || 0) + (breakdown.custodia_ars || 0), detail: 'Seguro, Custodia, Exposición', icon: '🛡️' },
   ];
 
   return (
