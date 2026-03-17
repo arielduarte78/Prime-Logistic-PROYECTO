@@ -50,9 +50,9 @@ Seleccione Estrategia de Auditoría:`}
       <div className="flex flex-wrap justify-center gap-3">
         {availableArchetypes.map(([key, arch]) => {
           // REFERENCIA DIRECTA AL PLAN DE LA ESTRATEGIA EN LA VUELTA DEL MAP
-          const planData = plans[key]; 
+          const planData = plans[key];
           const totalArchetypeCost = planData?.plan_financial_summary?.total_expected_cost || 0;
-          
+
           const isSelected = localSelected === key;
 
           return (
@@ -112,10 +112,10 @@ Seleccione Estrategia de Auditoría:`}
       )}
 
       {/* Technical detail (Cronograma de Salidas) */}
-      <TechnicalDetail 
-        fleetResponse={fleetResponse} 
-        selectedArchetype={localSelected} 
-        departureTime={parsedPayload?.departure_time || "08:00"} 
+      <TechnicalDetail
+        fleetResponse={fleetResponse}
+        selectedArchetype={localSelected}
+        departureTime={parsedPayload?.departure_time || "08:00"}
       />
 
       {/* CFO Audit Modal */}
