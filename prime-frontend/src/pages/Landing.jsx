@@ -51,24 +51,34 @@ export default function Landing() {
       {/* ─── CÓMO FUNCIONA ─── */}
       <section className="bg-gray-50 py-24 px-6">
         <div className="max-w-5xl mx-auto">
-          <h2 className="text-3xl font-bold text-gray-900 text-center">Cómo funciona</h2>
-          <p className="text-gray-500 text-center mt-3 mb-16">Tres pasos. Sin configuración.</p>
+          <h2 className="text-3xl font-bold text-gray-900 text-center">Cómo funciona Abbey</h2>
+          <p className="text-gray-500 text-center mt-3 mb-16">Decisiones logísticas con impacto financiero claro.</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <StepCard number="01" title="Subís tu Excel" description="Dos hojas: vehículos con origen y capacidad, destinos con coordenadas y demanda." />
-            <StepCard number="02" title="Abbey evalúa" description="El motor analiza seguridad vial, costos de peajes, combustible y ventanas horarias simultáneamente." />
-            <StepCard number="03" title="Elegís tu estrategia" description="Ruta más segura, menor costo o equilibrio óptimo. Cada una con mapa, cronograma y PDF para el chofer." />
+            <StepCard number="01" title="Carga de datos" description="Subís tu planilla con vehículos (origen y capacidad) y destinos (ubicación y demanda). Abbey utiliza esa información para armar el escenario completo." />
+            <StepCard number="02" title="Cálculo de rutas y costos" description="El sistema evalúa cada posible recorrido considerando distancia, consumo de combustible, peajes, tiempos de entrega y zonas de riesgo." />
+            <StepCard number="03" title="Elección de estrategia" description="Obtenés distintas formas de operar tu flota: menor costo total, menor exposición a riesgo o una combinación de ambas. Cada opción incluye rutas, cronograma y costos detallados." />
           </div>
         </div>
       </section>
 
       {/* ─── EVIDENCIA ─── */}
-      <section className="bg-white py-20 px-6">
-        <div className="max-w-4xl mx-auto">
-          <h2 className="text-3xl font-bold text-gray-900 text-center mb-14">El motor</h2>
+      <section className="bg-white py-24 px-6">
+        <div className="max-w-5xl mx-auto">
+          <h2 className="text-3xl font-bold text-gray-900 text-center">Capacidad de Abbey</h2>
+          <p className="text-gray-500 text-center mt-3 mb-16">Diseñado para operaciones reales teniendo en cuenta la incertidumbre.</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <MetricCard value="185.112" label="Nodos en el grafo vial del AMBA" />
-            <MetricCard value="4" label="Estrategias simultáneas por corrida" />
-            <MetricCard value="< 30s" label="Tiempo promedio de cálculo" />
+            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+              <h3 className="text-xl font-bold text-gray-900 mb-3">Cobertura completa del AMBA</h3>
+              <p className="text-sm text-gray-500 leading-relaxed">Planificá rutas en toda la red urbana, con alcance en múltiples municipios y zonas logísticas clave.</p>
+            </div>
+            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+              <h3 className="text-xl font-bold text-gray-900 mb-3">Impacto directo en costos</h3>
+              <p className="text-sm text-gray-500 leading-relaxed">Cada decisión refleja consumo de combustible, peajes y costos operativos reales.</p>
+            </div>
+            <div className="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm">
+              <h3 className="text-xl font-bold text-gray-900 mb-3">Estrategias adaptadas a tu operación</h3>
+              <p className="text-sm text-gray-500 leading-relaxed">Distintas formas de organizar tu flota según prioridades del día y condiciones del entorno.</p>
+            </div>
           </div>
         </div>
       </section>
@@ -76,7 +86,7 @@ export default function Landing() {
       {/* ─── CTA FINAL ─── */}
       <section className="bg-[#0F172A] py-24 px-6 text-center">
         <h2 className="text-4xl font-bold text-white mb-4">Empezá a optimizar hoy</h2>
-        <p className="text-gray-400 text-lg mb-10">Sin instalación. Sin configuración. Solo subí tu Excel.</p>
+        <p className="text-gray-400 text-lg mb-10">Sin instalación. Sin configuración. Solo subiendo tus datos.</p>
         <button onClick={handleComenzar}
           className="px-8 py-4 bg-white text-[#0F172A] font-bold rounded-xl text-lg hover:bg-gray-100 transition-colors">
           Abrir Abbey →
@@ -88,9 +98,9 @@ export default function Landing() {
         <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 items-center gap-4">
           <div>
             <span className="font-bold text-[#0F172A]">Abbey</span>
-            <p className="text-sm text-gray-400 mt-1">© 2026 Aphira</p>
+            <p className="text-sm text-gray-400 mt-1">Abbey © 2026 Aphira</p>
           </div>
-          <p className="text-sm text-gray-400 text-center">Motor Abbey 1.5</p>
+          <p className="text-sm text-gray-400 text-center">Abbey 1.5</p>
           <div className="flex justify-end"><ExcelTemplateButton /></div>
         </div>
       </footer>
@@ -108,11 +118,4 @@ function StepCard({ number, title, description }) {
   );
 }
 
-function MetricCard({ value, label }) {
-  return (
-    <div className="text-center p-8 rounded-2xl border border-gray-200 shadow-sm">
-      <p className="text-5xl font-black text-gray-900">{value}</p>
-      <p className="text-sm text-gray-500 mt-2">{label}</p>
-    </div>
-  );
-}
+
