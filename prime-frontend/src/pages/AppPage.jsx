@@ -24,7 +24,7 @@ export default function AppPage() {
         const [h, m] = (advConfig?.departure_time || "08:00").split(':').map(Number);
         const shiftMin = h * 60 + m;
 
-        // 🔥 EL FIX ESTÁ ACÁ: Pasamos el JSON anidado del CFO directo al Backend
+        // 🔥 EL FIX ESTÁ ACÁ: Pasamos el JSON anidado de la configuración financiera directo al Backend
         const finalPayload = {
             ...payload,
             departure_time: advConfig?.departure_time || "08:00",
@@ -99,7 +99,7 @@ export default function AppPage() {
                         </p>
                         <p className="text-sm text-slate-500 max-w-2xl mx-auto leading-relaxed">
                             Abbey cruza simultáneamente exposición al riesgo, topología urbana (peajes) y fricción operativa.
-                            Subí tu Excel de despachos, ajustá la matriz financiera y obtené un plan auditable CFO-Grade en segundos.
+                            Subí tu Excel de despachos, ajustá la matriz financiera y obtené un plan auditable de Auditoría Financiera en segundos.
                         </p>
                     </div>
 

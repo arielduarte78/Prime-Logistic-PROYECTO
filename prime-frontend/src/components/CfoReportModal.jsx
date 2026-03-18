@@ -18,7 +18,7 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
   const custody = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.custodia_ars || 0), 0);
   const riskCustody = risk + custody;
 
-  // Control de Integridad: Usamos el total directo del motor CFO
+  // Control de Integridad: Usamos el total directo del motor de cálculo
   const totalCost = breakdown.costo_total_ars || (opex_dist + opex_time + capex + fixed + riskCustody);
   const totalDist = assignments.reduce((acc, curr) => acc + (curr.cost_breakdown?.distancia_km || 0), 0);
 
@@ -60,7 +60,7 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
 
     doc.autoTable({
       startY: 85,
-      head: [['Concepto P&L (CFO)', 'Monto (ARS)', 'Impacto %']],
+      head: [['Concepto P&L (Audit)', 'Monto (ARS)', 'Impacto %']],
       body: tableBody,
       theme: 'striped',
       headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
@@ -75,9 +75,9 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
     const finalY = doc.lastAutoTable.finalY + 20;
     doc.setFontSize(8);
     doc.setTextColor(150);
-    doc.text("Generado por Abbey Audit Engine v2.0 - Reporte de Confianza Senior CFO", 14, finalY);
+    doc.text("Generado por Abbey Audit Engine v2.0 - Reporte de Confianza Senior Audit", 14, finalY);
 
-    doc.save(`Abbey_CfoReport_${archetype}_${Date.now()}.pdf`);
+    doc.save(`Abbey_AuditReport_${archetype}_${Date.now()}.pdf`);
   };
 
   return (
@@ -91,7 +91,7 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
             </div>
             <div>
               <h2 className="text-2xl font-black tracking-tight leading-none mb-2">Financial Audit Report</h2>
-              <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-white/40">CFO Dashboard • Unit Economics • Cost-to-Serve (CTS)</p>
+              <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-white/40">Audit Dashboard • Unit Economics • Cost-to-Serve (CTS)</p>
             </div>
           </div>
           <button onClick={onClose} className="p-3 hover:bg-white/10 rounded-2xl transition-all hover:rotate-90">
@@ -125,7 +125,7 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
                 <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-900">
                   <DollarSign size={14} className="text-emerald-600" /> Statement of Result
                 </div>
-                <span className="text-[10px] font-bold text-slate-300 tabular-nums uppercase">Audit Source: CFO Excel v2.0</span>
+                <span className="text-[10px] font-bold text-slate-300 tabular-nums uppercase">Audit Source: Matrix v2.0</span>
               </div>
               <div className="border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm ring-1 ring-slate-100">
                 <table className="w-full text-left border-collapse tabular-nums">
@@ -209,7 +209,7 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
         {/* Footer */}
         <div className="p-8 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em]">
-            <Clock size={16} /> Verified by Abbey Logic Engine • Senior CFO Dashboard
+            <Clock size={16} /> Verified by Abbey Logic Engine • Senior Audit Dashboard
           </div>
           <button
             onClick={exportPDF}
