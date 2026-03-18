@@ -77,7 +77,7 @@ const EditableRow = ({ label, value, onChange, format = "currency", unit = "" })
 
   return (
     <div className="flex items-center justify-between py-2.5 border-b border-blue-50 hover:bg-blue-50/50 px-3 rounded-lg transition-all group">
-      <span className="text-xs font-semibold text-slate-600 leading-tight pr-4 truncate flex-1" title={label}>{label}</span>
+      <span className="text-xs font-semibold text-slate-600 leading-tight pr-4 flex-1 whitespace-normal break-words" title={label}>{label}</span>
       <div className="flex items-center gap-2">
         <div className="relative w-[140px]">
           {format === "currency" && (
@@ -101,7 +101,7 @@ const CalculatedRow = ({ label, value, format = "currency", unit = "" }) => {
   const formatted = new Intl.NumberFormat('es-AR', { maximumFractionDigits: format === "currency" ? 2 : 4 }).format(value);
   return (
     <div className="flex items-center justify-between py-2.5 border-b border-slate-50 bg-slate-50/30 px-3 rounded-lg my-1 shadow-[inset_0_1px_2px_rgba(0,0,0,0.02)]">
-      <span className="text-xs font-medium text-slate-500 leading-tight pr-4 truncate flex-1" title={label}>{label}</span>
+      <span className="text-xs font-medium text-slate-500 leading-tight pr-4 flex-1 whitespace-normal break-words" title={label}>{label}</span>
       <div className="flex items-center gap-2">
         <div className="relative w-[140px] text-right bg-transparent py-1.5">
           {format === "currency" && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 font-bold text-xs">$</span>}
@@ -281,11 +281,11 @@ export default function AdvancedConfig({ onChange }) {
           <div className="flex justify-between items-end mb-12 pb-10 border-b border-slate-100">
             <div>
               <h2 className="text-2xl font-black text-slate-950 tracking-tight flex items-center gap-4 uppercase mb-2">
-                Matriz de Auditoría y Costos
+                Parámetros de Costo Base
               </h2>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Unidad de Negocio: Gestión Logística Prime</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Perfil: Vehículo Mediano (Distribución Urbana)</p>
               </div>
             </div>
             <button
@@ -300,7 +300,7 @@ export default function AdvancedConfig({ onChange }) {
 
             {/* COLUMNA IZQUIERDA */}
             <div className="space-y-2">
-              <SectionHeader title="SECCIÓN A — VEHÍCULO Y CAPEX" subtitle="Referencia: MB Atego 1721 · Camión Rígido + Acompañante" />
+              <SectionHeader title="ACTIVOS Y AMORTIZACIÓN (CAPEX)" subtitle="Valores de referencia para el cálculo de desgaste y depreciación" />
               <EditableRow label="Precio Camión (USD, a nuevo)" value={config.precio_camion_usd} onChange={(v) => update('precio_camion_usd', v)} unit="USD" />
               <EditableRow label="Cotización Dólar MEP" value={config.dolar_mep} onChange={(v) => update('dolar_mep', v)} unit="ARS/USD" />
               <CalculatedRow label="Valor a Nuevo camión" value={calc.valor_unidad_ars} />
@@ -312,13 +312,13 @@ export default function AdvancedConfig({ onChange }) {
               <EditableRow label="Días Hábiles por Mes" value={config.dias_habiles_mes} onChange={(v) => update('dias_habiles_mes', v)} format="number" unit="días/mes" />
               <EditableRow label="Horas Productivas por Mes" value={config.horas_productivas_mes} onChange={(v) => update('horas_productivas_mes', v)} format="number" unit="hs/mes" />
 
-              <SectionHeader title="SECCIÓN B — COMBUSTIBLE (Costo/KM)" subtitle="Cálculo basado en Diesel 500 / Puma Grado 2" />
+              <SectionHeader title="CONSUMO DE COMBUSTIBLE" subtitle="Cálculo basado en Diesel 500 / Puma Grado 2" />
               <EditableRow label="Precio Combustible" value={config.precio_gasoil} onChange={(v) => update('precio_gasoil', v)} unit="ARS/L" />
               <EditableRow label="Consumo Combinado" value={config.consumo_100km} onChange={(v) => update('consumo_100km', v)} format="number" unit="L/100km" />
               <CalculatedRow label="Consumo Específico" value={calc.consumo_l_km} format="number" unit="L/km" />
               <CalculatedRow label="COSTO COMBUSTIBLE POR KM" value={calc.costo_combustible_km} unit="ARS/km" />
 
-              <SectionHeader title="SECCIÓN C — NEUMÁTICOS" subtitle="Ciclo de Vida: Original + 2 Recapados" />
+              <SectionHeader title="COSTO DE NEUMÁTICOS" subtitle="Ciclo de Vida: Original + 2 Recapados" />
               <EditableRow label="Cubierta 295/80 R22.5" value={config.precio_cubierta} onChange={(v) => update('precio_cubierta', v)} unit="ARS/cub." />
               <EditableRow label="Dotación de Ejes" value={config.num_neumaticos} onChange={(v) => update('num_neumaticos', v)} format="number" unit="unidades" />
               <EditableRow label="Vida Útil Original" value={config.vida_util_original_km} onChange={(v) => update('vida_util_original_km', v)} format="number" unit="km" />
@@ -329,7 +329,7 @@ export default function AdvancedConfig({ onChange }) {
 
             {/* COLUMNA DERECHA */}
             <div className="space-y-2">
-              <SectionHeader title="SECCIÓN D — STAFF LABORAL (Costo/Hora)" subtitle="Convenio Colectivo 40/89 · Base Mar 2026" />
+              <SectionHeader title="ESTRUCTURA SALARIAL (Costo por Tiempo)" subtitle="Costos laborales, cargas sociales y viáticos operativos" />
               <EditableRow label="Sueldo Básico CCT" value={config.sueldo_basico} onChange={(v) => update('sueldo_basico', v)} unit="ARS/mes" />
               <EditableRow label="Aportes y ART (Factor)" value={config.cargas_sociales_pct} onChange={(v) => update('cargas_sociales_pct', v)} format="number" unit="factor" />
               <CalculatedRow label="Cargas Sociales ARS" value={calc.cargas_sociales_ars} unit="ARS/mes" />
@@ -338,7 +338,7 @@ export default function AdvancedConfig({ onChange }) {
               <CalculatedRow label="Provisión SAC/Vacaciones" value={calc.provision_sac_vacaciones} unit="ARS/mes" />
               <CalculatedRow label="COSTO LABORAL POR HORA" value={calc.costo_laboral_hora} unit="ARS/hora" />
 
-              <SectionHeader title="SECCIÓN E — OPERATIVA FIJA" subtitle="Seguros, Patentes y Telemetría Mensual" />
+              <SectionHeader title="OPERATIVA FIJA" subtitle="Seguros, Patentes y Telemetría Mensual" />
               <EditableRow label="Seguro Todo Riesgo" value={config.seguro_mensual} onChange={(v) => update('seguro_mensual', v)} unit="ARS/mes" />
               <EditableRow label="Patentes y Tasas" value={config.patente_mensual} onChange={(v) => update('patente_mensual', v)} unit="ARS/mes" />
               <EditableRow label="GPS y Cámaras de Fatiga" value={config.gps_mensual} onChange={(v) => update('gps_mensual', v)} unit="ARS/mes" />
@@ -346,10 +346,10 @@ export default function AdvancedConfig({ onChange }) {
               <CalculatedRow label="TOTAL OPERATIVA FIJA" value={calc.total_seguros_impuestos + calc.total_telemetria_generales} unit="ARS/mes" />
               <CalculatedRow label="COSTO FIJO POR HORA" value={calc.costo_seguros_hora + calc.costo_telemetria_hora} unit="ARS/hora" />
 
-              <SectionHeader title="SECCIÓN G — MANTENIMIENTO" subtitle="Correctivo + Preventivo Programado" />
+              <SectionHeader title="MANTENIMIENTO" subtitle="Correctivo + Preventivo Programado" />
               <EditableRow label="Mantenimiento Integral x KM" value={config.mantenimiento_km_ars} onChange={(v) => update('mantenimiento_km_ars', v)} unit="ARS/km" />
 
-              <SectionHeader title="SECCIÓN H — RIESGO PATRIMONIAL Y FRICCIÓN" subtitle="Auditoría de Exposición y Velocidad de Servicio" />
+              <SectionHeader title="RIESGO PATRIMONIAL Y FRICCIÓN OPERATIVA" subtitle="Variables de entorno, peajes y deducibles de seguro" />
               <EditableRow label="Velocidad Comercial Promedio" value={config.velocidad_comercial_kmh} onChange={(v) => update('velocidad_comercial_kmh', v)} format="number" unit="km/h" />
               <EditableRow label="Costo Peaje Promedio" value={config.peaje_promedio_ars} onChange={(v) => update('peaje_promedio_ars', v)} unit="ARS/ruta" />
               <EditableRow label="Tarifa Custodia por Hora" value={config.custodia_hora_ars} onChange={(v) => update('custodia_hora_ars', v)} unit="ARS/h" />
