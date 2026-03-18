@@ -249,9 +249,9 @@ export default function AdvancedConfig({ onChange }) {
             <Settings size={22} />
           </div>
           <div className="text-left">
-            <span className="block text-slate-900 font-black text-lg tracking-tight italic">Panel de Control CFO</span>
+            <span className="block text-slate-900 font-black text-lg tracking-tight italic">Estructura de Costos Logísticos</span>
             <div className="flex items-center gap-2">
-              <span className="block text-slate-400 text-[10px] uppercase tracking-[0.4em] font-bold">Auditoría y Costos Unitarios v1.5</span>
+              <span className="block text-slate-400 text-[10px] uppercase tracking-[0.4em] font-bold">Configuración de variables financieras, convenios y riesgo patrimonial</span>
               <div className="h-0.5 w-8 bg-blue-500/30 rounded-full"></div>
             </div>
           </div>
@@ -415,7 +415,7 @@ export default function AdvancedConfig({ onChange }) {
           </div>
 
           <div className="mt-12 text-center">
-            <p className="text-[9px] font-black text-slate-300 uppercase tracking-[1em]">Motor Central de Logística Prime v1.5.0 • Cumplimiento de Auditoría</p>
+            <p className="text-[9px] font-black text-slate-300 uppercase tracking-[1em]">Motor Central de Logística Prime v1.5.0 • Auditoría Financiera / Mar 2026</p>
           </div>
 
         </div>
