@@ -90,16 +90,15 @@ export default function AppPage() {
 
             {appState === 'idle' && (
                 <div className="max-w-4xl mx-auto px-6 py-12">
-                    <div className="mb-12 text-center">
-                        <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-4">
-                            Inteligencia de Márgenes Logísticos para el AMBA
+                    <div className="mb-12 text-center flex flex-col items-center">
+                        <span className="inline-block px-3 py-1 mb-6 text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full shadow-sm">
+                            ⚡ Simulación sobre tu operación real
+                        </span>
+                        <h1 className="text-4xl md:text-5xl font-black text-slate-900 tracking-tight mb-4">
+                            Cargá tu operación
                         </h1>
-                        <p className="text-lg text-slate-600 font-medium mb-6">
-                            Auditoría financiera y optimización de rutas basada en Unit Economics reales.
-                        </p>
-                        <p className="text-sm text-slate-500 max-w-2xl mx-auto leading-relaxed">
-                            Abbey cruza simultáneamente exposición al riesgo, topología urbana (peajes) y fricción operativa.
-                            Subí tu Excel de despachos, ajustá la matriz financiera y obtené un plan auditable de Auditoría Financiera en segundos.
+                        <p className="text-base md:text-lg text-slate-500 max-w-2xl mx-auto leading-relaxed font-medium">
+                            Subí tu planilla con flota y destinos. Abbey utiliza tus datos para calcular costos, rutas y tiempos de trabajo. Ajustá tus parámetros y obtené resultados listos para analizar y ejecutar.
                         </p>
                     </div>
 

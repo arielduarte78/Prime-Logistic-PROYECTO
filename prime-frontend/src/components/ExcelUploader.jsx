@@ -61,7 +61,7 @@ export default function ExcelUploader({ onParsed }) {
           </svg>
         </div>
         <div className="text-center">
-          <p className="text-gray-700 font-medium">Arrastrá tu Excel acá o hacé click para seleccionar</p>
+          <p className="text-gray-700 font-medium">Arrastrá tus datos acá o hacé click para seleccionar</p>
           <p className="text-gray-400 text-sm mt-1">Formatos aceptados: .xlsx, .xls</p>
         </div>
         <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={onFileChange} className="hidden" />
@@ -79,7 +79,7 @@ export default function ExcelUploader({ onParsed }) {
       <div className="flex flex-col items-center gap-3">
         <button id="show-structure-button" onClick={() => setModalOpen(true)}
           className="text-sm text-gray-500 hover:text-[#1F9D6A] underline underline-offset-4 transition-colors">
-          ¿Cómo debe ser el Excel?
+          ¿Cómo deben ser los datos?
         </button>
         <ExcelTemplateButton />
       </div>
