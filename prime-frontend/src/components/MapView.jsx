@@ -5,6 +5,7 @@ import L from 'leaflet';
 import { MAP_CONFIG } from '../constants/mapConfig';
 import { ARCHETYPES } from '../constants/archetypes';
 
+import ArchetypeChip from './ArchetypeChip';
 import PdfExportButton from './PdfExportButton';
 
 // Fix default marker icons
@@ -41,7 +42,7 @@ const tollIcon = L.divIcon({
   iconAnchor: [12, 12],
 });
 
-export default function MapView({ fleetResponse, selectedArchetype, parsedPayload, onBack }) {
+export default function MapView({ fleetResponse, selectedArchetype, parsedPayload, onChangeArchetype, onBack }) {
   const plans = fleetResponse?.plans || {};
   const destinations = parsedPayload?.destinations || [];
 
@@ -49,6 +50,14 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
   const [visibleVehicles, setVisibleVehicles] = useState(null);
 
   useEffect(() => { setVisibleVehicles(null); }, [selectedArchetype]);
+
+  // ─── Available archetypes ───
+  const availableArchetypes = Object.entries(ARCHETYPES).filter(([key]) => {
+    const plan = plans[key];
+    if (!plan || plan.error) return false;
+    if (key === 'unicornio') return plan.assignments?.some(a => a.route_destinations?.length > 0);
+    return true;
+  });
 
   // ─── Dest lookup ───
   const destLookup = useMemo(() => {
@@ -92,6 +101,34 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
     return map;
   }, [plans, selectedArchetype]);
 
+  // ─── segmentVehicleMap: Build a map of which segments belong to which vehicle ───
+  const segmentVehicleMap = useMemo(() => {
+    const plan = plans[selectedArchetype];
+    if (!plan?.assignments || !plan?.segments_pareto) return {};
+    
+    const map = {};
+    plan.segments_pareto.forEach((segment, sIdx) => {
+      // Buscar qué vehículo tiene este source_osm en su ruta
+      plan.assignments.forEach((assignment, vIdx) => {
+        const solution = (segment.pareto_solutions || [])
+          .find(sol => sol.archetype === selectedArchetype);
+        if (!solution?.route_nodes) return;
+        
+        // Asignar por índice proporcional como fallback (mejorable en el futuro con route_nodes exactos)
+        const segmentsPerVehicle = Math.ceil(plan.segments_pareto.length / plan.assignments.length);
+        const assignedVIdx = Math.floor(sIdx / segmentsPerVehicle);
+        
+        if (vIdx === assignedVIdx) {
+          map[sIdx] = {
+            vehicleId: assignment.vehicle?.id,
+            color: VEHICLE_COLORS[vIdx % VEHICLE_COLORS.length]
+          };
+        }
+      });
+    });
+    return map;
+  }, [plans, selectedArchetype]);
+
   // ─── Vehicle filter logic ───
   const toggleVehicle = (vehicleId) => {
     setVisibleVehicles(prev => {
@@ -115,6 +152,16 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
           </svg>
           Volver
         </button>
+        <div className="flex gap-2 overflow-x-auto">
+          {availableArchetypes.map(([key, arch]) => (
+            <ArchetypeChip
+              key={key}
+              archetype={arch}
+              onClick={onChangeArchetype}
+              isSelected={key === selectedArchetype}
+            />
+          ))}
+        </div>
         <div className="flex items-center gap-3">
           <PdfExportButton fleetResponse={fleetResponse} selectedArchetype={selectedArchetype} parsedPayload={parsedPayload} dark />
         </div>
@@ -154,21 +201,10 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                 .find(sol => sol.archetype === selectedArchetype);
               if (!solution?.route_coordinates || solution.route_coordinates.length < 2) return null;
 
-              // Determinar a qué vehículo pertenece este segmento
-              const ownerVehicle = vehicleWaypoints.find(vw =>
-                vw.assignment?.route_destinations?.some(d =>
-                  d.lat === solution.route_coordinates[solution.route_coordinates.length - 1]?.[0] ||
-                  segment.target_osm != null
-                )
-              );
+              const vehicleInfo = segmentVehicleMap[sIdx];
+              const vehicleId = vehicleInfo?.vehicleId;
+              const color = vehicleInfo?.color || ARCHETYPES[selectedArchetype]?.color || '#0F172A';
 
-              // Buscar el vehículo dueño comparando source/target con waypoints
-              const matchingVehicle = vehicleWaypoints.find((vw, vIdx) => {
-                const segIdx = Math.floor(sIdx / Math.max(1, (plans[selectedArchetype]?.segments_pareto?.length || 1) / vehicleWaypoints.length));
-                return vIdx === segIdx % vehicleWaypoints.length;
-              });
-
-              const vehicleId = matchingVehicle?.vehicleId;
               if (!isVehicleVisible(vehicleId)) return null;
 
               return (
@@ -176,7 +212,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                   key={`route-segment-${selectedArchetype}-${sIdx}`}
                   positions={solution.route_coordinates}
                   pathOptions={{
-                    color: matchingVehicle?.color || ARCHETYPES[selectedArchetype]?.color || '#0F172A',
+                    color,
                     weight: 6,
                     opacity: 1.0,
                     lineCap: 'round',
