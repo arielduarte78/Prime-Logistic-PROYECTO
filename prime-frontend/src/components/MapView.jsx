@@ -45,16 +45,10 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
   const plans = fleetResponse?.plans || {};
   const destinations = parsedPayload?.destinations || [];
 
-
-
-
-
   // ─── Vehicle filter state ───
   const [visibleVehicles, setVisibleVehicles] = useState(null);
 
   useEffect(() => { setVisibleVehicles(null); }, [selectedArchetype]);
-
-
 
   // ─── Dest lookup ───
   const destLookup = useMemo(() => {
@@ -98,8 +92,6 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
     return map;
   }, [plans, selectedArchetype]);
 
-
-
   // ─── Vehicle filter logic ───
   const toggleVehicle = (vehicleId) => {
     setVisibleVehicles(prev => {
@@ -111,8 +103,6 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
     });
   };
   const isVehicleVisible = (vehicleId) => visibleVehicles === null || visibleVehicles.has(vehicleId);
-
-
 
   return (
     <div id="map-view" className="flex flex-col h-screen">
@@ -254,7 +244,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                 </Popup>
               </Polygon>
             ))}
-
+          </MapContainer>
         </div>
 
         {/* ─── Schedule panel ─── */}
