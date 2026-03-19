@@ -50,5 +50,11 @@ export async function sendFleetRequest(payload) {
     throw finalError;
   }
 
+
   return response.json();
 }
+
+// Keepalive: ping cada 4 minutos para evitar que HF duerma el Space
+setInterval(() => {
+  fetch(`${API_URL}/health`).catch(() => {});
+}, 4 * 60 * 1000);
