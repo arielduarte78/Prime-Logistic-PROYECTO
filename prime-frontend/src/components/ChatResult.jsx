@@ -61,7 +61,6 @@ Seleccione Estrategia de Auditoría:`}
                 archetype={arch}
                 onClick={(id) => {
                   setLocalSelected(id);
-                  onSelectArchetype(id);
                 }}
                 isSelected={isSelected}
               />
@@ -74,6 +73,14 @@ Seleccione Estrategia de Auditoría:`}
           );
         })}
       </div>
+
+      {/* BOTÓN AGREGADO DESPUÉS DEL CONTENEDOR DE LOS CHIPS */}
+      <button
+        onClick={() => onSelectArchetype(localSelected)}
+        className="w-full py-3 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg mt-2"
+      >
+        Ver rutas en mapa →
+      </button>
 
       {/* Per-Assignment Cost Breakdown (Impacto Operativo) */}
       {assignments.length > 0 && (
