@@ -1,11 +1,10 @@
 //prime-frontend/src/components/MapView.jsx
-import React, { useMemo, useState, useRef, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import { MAP_CONFIG } from '../constants/mapConfig';
 import { ARCHETYPES } from '../constants/archetypes';
 
-import ArchetypeChip from './ArchetypeChip';
 import PdfExportButton from './PdfExportButton';
 
 // Fix default marker icons
@@ -34,11 +33,7 @@ const destIcon = (index, color = '#1F9D6A') => L.divIcon({
   iconAnchor: [15, 15],
 });
 
-const animatingTruckIcon = (vehicleId, color) => L.divIcon({
-  className: '',
-  html: `<div style="background:${color};color:white;padding:5px 10px;border-radius:10px;font-size:11px;font-weight:800;font-family:Inter,sans-serif;box-shadow:0 4px 15px ${color}80;border:2px solid white;white-space:nowrap;">🚛 ${vehicleId}</div>`,
-  iconAnchor: [40, 16],
-});
+
 
 const tollIcon = L.divIcon({
   className: '',
@@ -46,31 +41,20 @@ const tollIcon = L.divIcon({
   iconAnchor: [12, 12],
 });
 
-export default function MapView({ fleetResponse, selectedArchetype, parsedPayload, onChangeArchetype, onBack }) {
+export default function MapView({ fleetResponse, selectedArchetype, parsedPayload, onBack }) {
   const plans = fleetResponse?.plans || {};
   const destinations = parsedPayload?.destinations || [];
 
 
 
-  // ─── Simulation state ───
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [simTime, setSimTime] = useState('08:00');
-  const [simPositions, setSimPositions] = useState({});
-  const animFrameRef = useRef(null);
+
 
   // ─── Vehicle filter state ───
   const [visibleVehicles, setVisibleVehicles] = useState(null);
 
   useEffect(() => { setVisibleVehicles(null); }, [selectedArchetype]);
-  useEffect(() => { return () => { if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current); }; }, []);
 
-  // ─── Available archetypes ───
-  const availableArchetypes = Object.entries(ARCHETYPES).filter(([key]) => {
-    const plan = plans[key];
-    if (!plan || plan.error) return false;
-    if (key === 'unicornio') return plan.assignments?.some(a => a.route_destinations?.length > 0);
-    return true;
-  });
+
 
   // ─── Dest lookup ───
   const destLookup = useMemo(() => {
@@ -128,66 +112,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
   };
   const isVehicleVisible = (vehicleId) => visibleVehicles === null || visibleVehicles.has(vehicleId);
 
-  // ─── Simulation times ───
-  const simulationTimes = useMemo(() => {
-    const plan = plans[selectedArchetype];
-    if (!plan?.assignments) return { startMinutes: 8 * 60, endMinutes: 17 * 60 };
-    const allTimes = plan.assignments
-      .flatMap(a => a.schedule || [])
-      .map(s => s.suggested_arrival_hhmm).filter(Boolean)
-      .map(t => { const [h, m] = t.split(':').map(Number); return h * 60 + m; })
-      .filter(t => !isNaN(t));
-    if (allTimes.length === 0) return { startMinutes: 8 * 60, endMinutes: 17 * 60 };
-    return { startMinutes: Math.max(0, Math.min(...allTimes) - 30), endMinutes: Math.max(...allTimes) + 15 };
-  }, [plans, selectedArchetype]);
 
-  const startHH = String(Math.floor(simulationTimes.startMinutes / 60)).padStart(2, '0');
-  const startMM = String(simulationTimes.startMinutes % 60).padStart(2, '0');
-
-  // ─── Simulation ───
-  const startSimulation = () => {
-    const visibleRoutes = vehicleWaypoints.filter(vw => isVehicleVisible(vw.vehicleId));
-    const hasAny = visibleRoutes.some(vw => vw.assignment?.route_coordinates?.length >= 2);
-    if (!hasAny) return;
-
-    setIsSimulating(true);
-    setSimPositions({});
-    const totalDurationMs = 10000;
-    const startMs = Date.now();
-    const { startMinutes, endMinutes } = simulationTimes;
-    const totalSimMinutes = Math.max(endMinutes - startMinutes, 60);
-
-    const animate = () => {
-      const elapsed = Date.now() - startMs;
-      const progress = Math.min(elapsed / totalDurationMs, 1);
-      const currentMinutes = startMinutes + Math.floor(progress * totalSimMinutes);
-      setSimTime(`${String(Math.floor(currentMinutes / 60)).padStart(2, '0')}:${String(currentMinutes % 60).padStart(2, '0')}`);
-      
-      const newPositions = {};
-      visibleRoutes.forEach(vw => {
-        const coords = vw.assignment?.route_coordinates;
-        if (!coords || coords.length < 2) return;
-        const idx = Math.min(Math.floor(progress * (coords.length - 1)), coords.length - 1);
-        newPositions[vw.vehicleId] = { pos: coords[idx], color: vw.color };
-      });
-      setSimPositions(newPositions);
-
-      if (progress < 1) { 
-        animFrameRef.current = requestAnimationFrame(animate); 
-      } else { 
-        setIsSimulating(false); 
-        setSimPositions({}); 
-      }
-    };
-    animFrameRef.current = requestAnimationFrame(animate);
-
-  };
-
-  const stopSimulation = () => {
-    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    setIsSimulating(false);
-    setSimPositions({});
-  };
 
   return (
     <div id="map-view" className="flex flex-col h-screen">
@@ -200,28 +125,19 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
           </svg>
           Volver
         </button>
-        <div className="flex gap-2 overflow-x-auto">
-          {availableArchetypes.map(([key, arch]) => (
-            <ArchetypeChip key={key} archetype={arch} onClick={onChangeArchetype} isSelected={key === selectedArchetype} />
-          ))}
-        </div>
         <div className="flex items-center gap-3">
-
-          <button onClick={isSimulating ? stopSimulation : startSimulation}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
-            style={{ background: isSimulating ? '#DC2626' : '#1F9D6A', color: 'white' }}>
-            {isSimulating ? '⏹ Detener' : `▶ Simular desde ${startHH}:${startMM}`}
-          </button>
           <PdfExportButton fleetResponse={fleetResponse} selectedArchetype={selectedArchetype} parsedPayload={parsedPayload} dark />
         </div>
       </div>
 
       {/* ─── Vehicle filter bar ─── */}
       <div className="flex items-center gap-2 px-4 py-2 bg-[#0F172A]/50 border-b border-white/10 flex-shrink-0">
-        <span className="text-xs text-gray-400 mr-1">Filtrar:</span>
+        <span className="text-xs text-white/60 mr-1 font-bold uppercase tracking-widest">Filtrar:</span>
         <button onClick={() => setVisibleVehicles(null)}
-          className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
-            visibleVehicles === null ? 'bg-white text-[#0F172A]' : 'bg-white/10 text-gray-300 hover:bg-white/20'
+          className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
+            visibleVehicles === null 
+              ? 'bg-white text-slate-900' 
+              : 'bg-white/15 text-white hover:bg-white/25'
           }`}>Todos</button>
         {vehicleWaypoints.map((vw) => (
           <button key={vw.vehicleId} onClick={() => toggleVehicle(vw.vehicleId)}
@@ -246,17 +162,33 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
             {(plans[selectedArchetype]?.segments_pareto || []).map((segment, sIdx) => {
               const solution = (segment.pareto_solutions || [])
                 .find(sol => sol.archetype === selectedArchetype);
-              
               if (!solution?.route_coordinates || solution.route_coordinates.length < 2) return null;
-              
+
+              // Determinar a qué vehículo pertenece este segmento
+              const ownerVehicle = vehicleWaypoints.find(vw =>
+                vw.assignment?.route_destinations?.some(d =>
+                  d.lat === solution.route_coordinates[solution.route_coordinates.length - 1]?.[0] ||
+                  segment.target_osm != null
+                )
+              );
+
+              // Buscar el vehículo dueño comparando source/target con waypoints
+              const matchingVehicle = vehicleWaypoints.find((vw, vIdx) => {
+                const segIdx = Math.floor(sIdx / Math.max(1, (plans[selectedArchetype]?.segments_pareto?.length || 1) / vehicleWaypoints.length));
+                return vIdx === segIdx % vehicleWaypoints.length;
+              });
+
+              const vehicleId = matchingVehicle?.vehicleId;
+              if (!isVehicleVisible(vehicleId)) return null;
+
               return (
                 <Polyline
                   key={`route-segment-${selectedArchetype}-${sIdx}`}
                   positions={solution.route_coordinates}
                   pathOptions={{
-                    color: ARCHETYPES[selectedArchetype]?.color || '#0F172A',
+                    color: matchingVehicle?.color || ARCHETYPES[selectedArchetype]?.color || '#0F172A',
                     weight: 6,
-                    opacity: 1.0, // Opacidad total según directiva
+                    opacity: 1.0,
                     lineCap: 'round',
                     lineJoin: 'round'
                   }}
@@ -323,21 +255,6 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
               </Polygon>
             ))}
 
-            {/* Animated trucks */}
-            {Object.entries(simPositions).map(([vehicleId, { pos, color }]) => (
-              <Marker key={`sim-${vehicleId}`} position={pos}
-                icon={animatingTruckIcon(vehicleId, color)} zIndexOffset={1000} />
-            ))}
-          </MapContainer>
-
-          {/* Floating clock */}
-          {isSimulating && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-[#0F172A]/95 text-white px-6 py-3 rounded-2xl shadow-2xl backdrop-blur-sm flex items-center gap-3">
-              <span className="text-green-400 animate-pulse">●</span>
-              <span className="font-mono text-2xl font-bold tracking-widest">{simTime}</span>
-              <span className="text-gray-400 text-sm">simulación en curso</span>
-            </div>
-          )}
         </div>
 
         {/* ─── Schedule panel ─── */}
