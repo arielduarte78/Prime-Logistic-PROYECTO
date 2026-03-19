@@ -1,4 +1,4 @@
-#weight_builder.py
+#src/bloque4/weight_builder.py
 import logging
 import math
 from dataclasses import dataclass

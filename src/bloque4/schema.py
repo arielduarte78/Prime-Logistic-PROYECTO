@@ -1,4 +1,4 @@
-#schema.py
+#src/bloque4/schema.py
 from __future__ import annotations
 import math
 import logging
