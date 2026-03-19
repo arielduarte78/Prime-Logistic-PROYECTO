@@ -45,9 +45,7 @@ if ($LASTEXITCODE -ne 0) { exit 1 }
 
 # 5. Frontend Deployment (Optional if Vercel hook is active, but enforced here)
 Write-Host "--> Triggering Vercel Production Build..." -ForegroundColor Green
-cd $PRIME_FRONTEND_DIR
-vercel --prod --yes
-cd ..
+vercel --prod --yes --cwd prime-frontend
 
 # 6. Conclusion
 Write-Host "`n--- Deployment Complete ---" -ForegroundColor Green
