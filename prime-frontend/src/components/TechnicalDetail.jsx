@@ -23,10 +23,9 @@ export default function TechnicalDetail({ fleetResponse, selectedArchetype, depa
       {isOpen && (
         <div className="mt-3 p-5 rounded-xl bg-white border border-gray-200 shadow-sm text-sm space-y-5">
           {/* General metrics */}
-          <div className="grid grid-cols-3 gap-4">
-            <MetricCard label="Tiempo total" value={`${fleetResponse.total_time_ms?.toFixed(0)} ms`} />
-            <MetricCard label="Tramos Pareto" value={fleetResponse.phase4_total_legs} />
-            <MetricCard label="Peajes estimados" value={fleetResponse.toll_fallback_edges} />
+          <div className="grid grid-cols-2 gap-4">
+            <MetricCard label="Tiempo total" value={`${(fleetResponse.total_time_ms / 1000).toFixed(1)} seg`} />
+            <MetricCard label="Rutas analizadas" value={fleetResponse.phase4_total_legs} />
           </div>
 
           {/* Per-archetype hierarchical schedule */}
@@ -49,8 +48,8 @@ export default function TechnicalDetail({ fleetResponse, selectedArchetype, depa
                       <div key={aIdx} className="rounded-lg border border-gray-100 overflow-hidden">
                         {/* Vehicle header */}
                         <div className="px-4 py-2 bg-gray-50 flex items-center justify-between">
-                          <span className="font-semibold text-gray-700 text-xs">🚛 {vehicle?.id || `V${aIdx + 1}`}</span>
-                          <span className="text-gray-400 text-xs">{vehicle?.capacity_tons} tn</span>
+                          <span className="font-semibold text-gray-700 text-xs">🚛 {`Camión ${aIdx + 1}`}</span>
+                          <span className="text-gray-400 text-xs">Capacidad: {vehicle?.capacity_tons} tn</span>
                         </div>
                         <div className="divide-y divide-gray-50 text-xs">
                           {/* Departure */}
@@ -74,7 +73,9 @@ export default function TechnicalDetail({ fleetResponse, selectedArchetype, depa
                             <span className="text-gray-400 flex items-center gap-2">
                               <span className="text-blue-400">🔵</span> Retorno a base
                             </span>
-                            <span className="font-mono text-gray-400">—</span>
+                            <span className="font-mono text-gray-400">
+                              {schedule.find(s => s.is_return || s.destination_id === "__RETURN_BASE__")?.suggested_arrival_hhmm || 'Horario a confirmar'}
+                            </span>
                           </div>
                         </div>
                       </div>

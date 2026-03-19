@@ -1,4 +1,4 @@
-#pareto.py
+#src/bloque4/pareto.py
 from __future__ import annotations
 
 import logging
