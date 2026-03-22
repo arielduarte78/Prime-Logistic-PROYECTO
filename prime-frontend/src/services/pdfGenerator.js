@@ -1,5 +1,5 @@
 //prime-frontend/src/services/pdfGenerator.js
-import { jsPDF } from 'jspdf';
+import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 
 function generateVehiclePdf(assignment, archetype, parsedPayload, generationDate) {
