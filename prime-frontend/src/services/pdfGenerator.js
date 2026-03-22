@@ -1,6 +1,6 @@
 //prime-frontend/src/services/pdfGenerator.js
-import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 function generateVehiclePdf(assignment, archetype, parsedPayload, generationDate) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -79,7 +79,7 @@ function generateVehiclePdf(assignment, archetype, parsedPayload, generationDate
     ];
   });
 
-  doc.autoTable({
+  autoTable(doc, {
     startY: y,
     head: [['N°', 'Destino', 'Dirección/Ref', 'Hora estimada', 'Tiempo de servicio', 'Observaciones']],
     body: tableBody,
