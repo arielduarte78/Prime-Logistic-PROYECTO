@@ -90,8 +90,8 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
               <TrendingUp className="text-emerald-400" size={32} />
             </div>
             <div>
-              <h2 className="text-2xl font-black tracking-tight leading-none mb-2">Financial Audit Report</h2>
-              <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-white/40">Audit Dashboard • Unit Economics • Cost-to-Serve (CTS)</p>
+              <h2 className="text-2xl font-black tracking-tight leading-none mb-2">Reporte de Auditoría Financiera</h2>
+              <p className="text-[10px] uppercase tracking-[0.3em] font-bold text-white/40">Panel de Auditoría • Economía Unitaria • Costo Servido (CTS)</p>
             </div>
           </div>
           <button onClick={onClose} className="p-3 hover:bg-white/10 rounded-2xl transition-all hover:rotate-90">
@@ -123,9 +123,9 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-900">
-                  <DollarSign size={14} className="text-emerald-600" /> Statement of Result
+                  <DollarSign size={14} className="text-emerald-600" /> Estado de Resultados
                 </div>
-                <span className="text-[10px] font-bold text-slate-300 tabular-nums uppercase">Audit Source: Matrix v2.0</span>
+                <span className="text-[10px] font-bold text-slate-300 tabular-nums uppercase">Fuente de Auditoría: Matrix v2.0</span>
               </div>
               <div className="border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm ring-1 ring-slate-100">
                 <table className="w-full text-left border-collapse tabular-nums">
@@ -188,7 +188,7 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
 
               <div className="mt-6 p-6 bg-slate-900 rounded-[2rem] text-white space-y-4 shadow-xl shadow-slate-200">
                 <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-white/30">
-                  <span>Executive Metrics</span>
+                  <span>Métricas Ejecutivas</span>
                   <TrendingUp size={12} />
                 </div>
                 <div className="flex items-end justify-between tabular-nums">
@@ -209,13 +209,13 @@ export default function CfoReportModal({ isOpen, onClose, breakdown, archetype, 
         {/* Footer */}
         <div className="p-8 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-3 text-[10px] font-black text-slate-300 uppercase tracking-[0.2em]">
-            <Clock size={16} /> Verified by Abbey Logic Engine • Senior Audit Dashboard
+            <Clock size={16} /> Verificado por Abbey Logic Engine • Panel de Auditoría Senior
           </div>
           <button
             onClick={exportPDF}
             className="flex items-center gap-3 px-10 py-5 bg-slate-900 text-white rounded-[1.25rem] font-black text-xs uppercase tracking-[0.2em] hover:bg-black shadow-2xl transition-all hover:-translate-y-1 active:scale-95 group"
           >
-            <Download size={18} className="text-emerald-600 group-hover:animate-bounce" /> Export Senior Office Report
+            <Download size={18} className="text-emerald-600 group-hover:animate-bounce" /> Exportar Reporte Ejecutivo
           </button>
         </div>
       </div>
