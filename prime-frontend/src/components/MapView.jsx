@@ -78,7 +78,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
       const destWaypoints = routeDests.map(d => ({ lat: d.lat, lon: d.lon, id: d.id }));
       const waypoints = origin ? [origin, ...destWaypoints] : destWaypoints;
       return {
-        vehicleId: vehicle?.id || `V${vIdx + 1}`,
+        vehicleId: `Camión ${vIdx + 1}`,
         color: VEHICLE_COLORS[vIdx % VEHICLE_COLORS.length],
         waypoints,
         assignment,
@@ -95,7 +95,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
     plan.assignments.forEach((assignment, vIdx) => {
       const color = VEHICLE_COLORS[vIdx % VEHICLE_COLORS.length];
       (assignment.route_destinations || []).forEach((dest, dIdx) => {
-        map[dest.id] = { color, order: dIdx + 1, vehicleId: assignment.vehicle?.id };
+        map[dest.id] = { color, order: dIdx + 1, vehicleId: `Camión ${vIdx + 1}` };
       });
     });
     return map;
@@ -120,7 +120,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
         
         if (vIdx === assignedVIdx) {
           map[sIdx] = {
-            vehicleId: assignment.vehicle?.id,
+            vehicleId: `Camión ${vIdx + 1}`,
             color: VEHICLE_COLORS[vIdx % VEHICLE_COLORS.length]
           };
         }
@@ -225,9 +225,9 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
 
 
             {/* Vehicle origins */}
-            {(parsedPayload?.vehicles || []).map((v) => (
-              <Marker key={`origin-${v.id}`} position={[v.origin_lat, v.origin_lon]} icon={truckIcon(v.id)}>
-                <Popup><strong>🚛 {v.id}</strong><br />Punto de partida<br />Capacidad: {v.capacity_tons} tn</Popup>
+            {(parsedPayload?.vehicles || []).map((v, vIdx) => (
+              <Marker key={`origin-${v.id}`} position={[v.origin_lat, v.origin_lon]} icon={truckIcon(`Camión ${vIdx + 1}`)}>
+                <Popup><strong>🚛 {`Camión ${vIdx + 1}`}</strong><br />Punto de partida<br />Capacidad: {v.capacity_tons} tn</Popup>
               </Marker>
             ))}
 
@@ -301,8 +301,8 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                   {/* Vehicle header */}
                   <div className="px-4 py-3 flex items-center justify-between"
                     style={{ background: VEHICLE_COLORS[aIdx % VEHICLE_COLORS.length] }}>
-                    <span className="text-white font-bold text-sm">🚛 {vehicle?.id || `V${aIdx + 1}`}</span>
-                    <span className="text-white/70 text-xs">{vehicle?.capacity_tons} tn</span>
+                    <span className="text-white font-bold text-sm">🚛 {`Camión ${aIdx + 1}`}</span>
+                    <span className="text-white/70 text-xs">Capacidad: {vehicle?.capacity_tons} tn</span>
                   </div>
                   {/* Origin */}
                   <div className="px-4 py-2 bg-gray-50 text-xs text-gray-500 border-b border-gray-100">
@@ -347,7 +347,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
                             <span className="text-blue-400">🔵</span> Retorno a base
                           </span>
                           <span className="text-sm font-mono text-gray-400">
-                            {returnEntry?.suggested_arrival_hhmm || '—'}
+                            {returnEntry?.suggested_arrival_hhmm || 'Horario a confirmar'}
                           </span>
                         </div>
                       );

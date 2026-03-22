@@ -23,37 +23,6 @@ export default function ChatResult({ fleetResponse, parsedPayload, onSelectArche
   const currentPlan = plans[localSelected] || {};
   const assignments = currentPlan.assignments || [];
 
-  const formatReasoningLog = (log, archKey) => {
-    if (!log) return null;
-    
-    const labels = {
-      tanque: '🛡️ Ruta más segura',
-      apostador: '💰 Menor costo',
-      equilibrista: '⚖️ Equilibrio óptimo',
-      unicornio: '🦄 Solución excepcional'
-    };
-
-    const opexMatch = log.match(/OPEX Distancia auditado: \$ ([\d,.]+) ARS/);
-    const tramos = log.match(/(\d+) tramos reales/)?.[1];
-    const opex = opexMatch ? parseFloat(opexMatch[1].replace(',', '')) : null;
-
-    return (
-      <div className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-100 text-[11px] text-slate-600 leading-relaxed">
-        <span className="font-black text-slate-900 uppercase tracking-tighter">
-          {labels[archKey] || archKey}:
-        </span>{' '}
-        {tramos && <span>{tramos} tramos analizados · </span>}
-        {opex && (
-          <span>
-            Costo de desplazamiento: <span className="font-bold text-slate-800">
-              ${opex.toLocaleString('es-AR', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ARS
-            </span>
-          </span>
-        )}
-      </div>
-    );
-  };
-
   return (
     <div id="chat-result" className="flex flex-col items-center w-full max-w-2xl mx-auto gap-6 py-10 px-4">
       {/* Reporte de Auditoría Trigger */}
@@ -138,10 +107,27 @@ Seleccione Estrategia de Auditoría:`}
           {availableArchetypes.map(([key, arch]) => {
             const plan = plans[key];
             if (!plan?.reasoning_log) return null;
+            
+            const log = plan.reasoning_log;
+            const tramosMatch = log.match(/(\d+) tramos reales/);
+            const opexMatch = log.match(/OPEX Distancia auditado: \$ ([\d,.]+) ARS/);
+            const tramos = tramosMatch?.[1];
+            const opex = opexMatch ? parseFloat(opexMatch[1].replace(',', '')) : null;
+            
+            const labels = {
+              tanque: '🛡️ Ruta más segura',
+              apostador: '💰 Menor costo',
+              equilibrista: '⚖️ Equilibrio óptimo',
+              unicornio: '🦄 Solución excepcional'
+            };
+
             return (
-              <React.Fragment key={`reason-${key}`}>
-                {formatReasoningLog(plan.reasoning_log, key)}
-              </React.Fragment>
+              <div key={`reason-${key}`}
+                className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-100 text-[11px] text-slate-600 leading-relaxed font-medium">
+                <span className="font-black text-slate-900 uppercase tracking-tighter">{labels[key] || arch.label}:</span>{' '}
+                {tramos && <span>{tramos} tramos analizados · </span>}
+                {opex && <span>Costo de desplazamiento: <span className="font-bold text-slate-800">${opex.toLocaleString('es-AR', {minimumFractionDigits: 0, maximumFractionDigits: 0})} ARS</span></span>}
+              </div>
             );
           })}
         </div>
