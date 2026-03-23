@@ -12,7 +12,6 @@ from concurrent.futures import ThreadPoolExecutor
 from src.api.schemas import FleetRequest, FleetResponse, ParetoResult
 from src.block5.cost_matrix_builder import build_dense_cost_matrix
 from src.block5.vrp_solver import solve_vrp
-from src.bloque1.duckdb_ingestor import get_nearest_node_osm_id
 from src.bloque4.rx_adapter import get_rx_idx_for_osm, build_legacy_graph
 from src.bloque4.multiobjective_engine import MultiObjectiveEngine
 from src.bloque4.pareto import ParetoFrontResult
@@ -609,23 +608,34 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
 
     V_rx = []
     for v in payload.vehicles:
-        osm_id = get_nearest_node_osm_id(v.origin_lat, v.origin_lon)
-        rx_idx = get_rx_idx_for_osm(osm_to_rx, osm_id)
-        if rx_idx is not None:
-            V_rx.append(rx_idx)
-            allowed_nodes.add(rx_idx)
-        else:
+        candidates = spatial_index.query_ball_point([v.origin_lat, v.origin_lon], 0.01)
+        if not candidates:
+            candidates = spatial_index.query_ball_point([v.origin_lat, v.origin_lon], 0.05)
+        if not candidates:
             raise HTTPException(status_code=400, detail=f"Vehicle {v.id} origin node unreachable.")
+        # Encontrar el más cercano entre los candidatos
+        best = min(candidates, key=lambda i: (spatial_rx_indices[i] and 
+            (base_graph[spatial_rx_indices[i]].lat - v.origin_lat)**2 + 
+            (base_graph[spatial_rx_indices[i]].lon - v.origin_lon)**2))
+        rx_idx = spatial_rx_indices[best]
+        V_rx.append(rx_idx)
+        allowed_nodes.add(rx_idx)
 
     D_rx = []
     for d in payload.destinations:
-        osm_id = get_nearest_node_osm_id(d.lat, d.lon)
-        rx_idx = get_rx_idx_for_osm(osm_to_rx, osm_id)
-        if rx_idx is not None:
-            D_rx.append(rx_idx)
-            allowed_nodes.add(rx_idx)
-        else:
+        candidates = spatial_index.query_ball_point([d.lat, d.lon], 0.01)
+        if not candidates:
+            candidates = spatial_index.query_ball_point([d.lat, d.lon], 0.05)
+        if not candidates:
             raise HTTPException(status_code=400, detail=f"Destination {d.id} root node unreachable.")
+        best = min(candidates, key=lambda i: (
+            (base_graph[spatial_rx_indices[i]].lat - d.lat)**2 + 
+            (base_graph[spatial_rx_indices[i]].lon - d.lon)**2))
+        rx_idx = spatial_rx_indices[best]
+        D_rx.append(rx_idx)
+        allowed_nodes.add(rx_idx)
+
+    logger.info(f"Phase 1 complete: {len(V_rx)} vehicles + {len(D_rx)} destinations resolved in {(time.time()-t0_p1)*1000:.0f}ms")
 
     total_edges_subgraph = len(allowed_nodes)
     
