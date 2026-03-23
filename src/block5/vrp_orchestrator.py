@@ -590,8 +590,8 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
         min_lon = min(min_lon, d.lon)
         max_lon = max(max_lon, d.lon)
 
-    pad_lat = (max_lat - min_lat) * 0.15
-    pad_lon = (max_lon - min_lon) * 0.15
+    pad_lat = (max_lat - min_lat) * 0.10
+    pad_lon = (max_lon - min_lon) * 0.10
     if pad_lat == 0: pad_lat = 0.05
     if pad_lon == 0: pad_lon = 0.05
     min_lat -= pad_lat
@@ -653,10 +653,11 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
     p2_lat_center = (min(all_lats) + max(all_lats)) / 2
     p2_lon_center = (min(all_lons) + max(all_lons)) / 2
     p2_diagonal = math.sqrt((max(all_lats) - min(all_lats))**2 + (max(all_lons) - min(all_lons))**2)
-    p2_radius = max(p2_diagonal * 0.8, 0.15)
+    p2_radius = max(p2_diagonal * 0.5, 0.10)
     p2_candidates = spatial_index.query_ball_point([p2_lat_center, p2_lon_center], p2_radius)
     p2_subgraph_nodes = set(spatial_rx_indices[i] for i in p2_candidates)
     p2_subgraph_nodes.update(nodes_of_interest)
+    logger.info(f"Phase 2 subgraph: {len(p2_subgraph_nodes):,} nodos (vs {len(base_graph):,} total)")
 
     # ─── INYECCIÓN CFO DIRECTA ───
     if payload.economic_profile:
