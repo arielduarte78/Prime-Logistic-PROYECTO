@@ -107,25 +107,38 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
     if (!plan?.assignments || !plan?.segments_pareto) return {};
     
     const map = {};
-    plan.segments_pareto.forEach((segment, sIdx) => {
-      // Buscar qué vehículo tiene este source_osm en su ruta
-      plan.assignments.forEach((assignment, vIdx) => {
-        const solution = (segment.pareto_solutions || [])
-          .find(sol => sol.archetype === selectedArchetype);
-        if (!solution?.route_nodes) return;
-        
-        // Asignar por índice proporcional como fallback (mejorable en el futuro con route_nodes exactos)
-        const segmentsPerVehicle = Math.ceil(plan.segments_pareto.length / plan.assignments.length);
-        const assignedVIdx = Math.floor(sIdx / segmentsPerVehicle);
-        
-        if (vIdx === assignedVIdx) {
-          map[sIdx] = {
+    
+    // Construir lista ordenada de legs por vehículo desde route_indices
+    let segmentIdx = 0;
+    plan.assignments.forEach((assignment, vIdx) => {
+      const route = assignment.route_indices || [];
+      const numLegs = Math.max(0, route.length - 1);
+      
+      for (let i = 0; i < numLegs; i++) {
+        if (segmentIdx < plan.segments_pareto.length) {
+          map[segmentIdx] = {
             vehicleId: assignment.vehicle?.id,
             color: VEHICLE_COLORS[vIdx % VEHICLE_COLORS.length]
           };
+          segmentIdx++;
         }
-      });
+      }
     });
+    
+    // Fallback: si hay segmentos sin asignar, repartirlos proporcionalmente
+    const totalSegments = plan.segments_pareto.length;
+    if (segmentIdx < totalSegments) {
+      const remaining = totalSegments - segmentIdx;
+      const perVehicle = Math.ceil(remaining / plan.assignments.length);
+      for (let i = segmentIdx; i < totalSegments; i++) {
+        const vIdx = Math.floor((i - segmentIdx) / perVehicle) % plan.assignments.length;
+        map[i] = {
+          vehicleId: plan.assignments[vIdx]?.vehicle?.id,
+          color: VEHICLE_COLORS[vIdx % VEHICLE_COLORS.length]
+        };
+      }
+    }
+    
     return map;
   }, [plans, selectedArchetype]);
 
@@ -203,7 +216,7 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
 
               const vehicleInfo = segmentVehicleMap[sIdx];
               const vehicleId = vehicleInfo?.vehicleId;
-              const color = vehicleInfo?.color || ARCHETYPES[selectedArchetype]?.color || '#0F172A';
+              const color = vehicleInfo?.color || VEHICLE_COLORS[0];
 
               if (!isVehicleVisible(vehicleId)) return null;
 
