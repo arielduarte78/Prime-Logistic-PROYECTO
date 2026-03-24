@@ -1,4 +1,6 @@
 #src/api/main.py
+import base64
+import os
 import time
 import math
 import asyncio
@@ -18,7 +20,10 @@ from dotenv import load_dotenv
 # Cargar variables de entorno al inicio
 load_dotenv()
 
-from src.api.schemas import RouteRequest, RouteResponse, ParetoResult, FleetRequest, FleetResponse
+from src.api.schemas import (
+    RouteRequest, RouteResponse, ParetoResult, FleetRequest, FleetResponse,
+    TokenRequest, TokenResponse, RefreshResponse,
+)
 from src.block5.vrp_orchestrator import calculate_fleet
 from src.block5.speed_profile_loader import load_speed_profiles
 from src.bloque1.h3_router import build_h3_corridor
@@ -33,7 +38,14 @@ from src.bloque4.pareto import ParetoFrontResult
 import duckdb
 from src.config.settings import load_cost_settings
 from src.bloque3.threat_loader import load_h3_threat_matrix
+from src.bloque3.integrity_chain import IntegrityChain
 from src.api.security import rate_limit_route, rate_limit_fleet, verify_api_key
+from src.api.identity import (
+    configure_identity, sanitize_secrets, get_current_identity,
+    require_role, track_usage, create_access_token, create_refresh_token,
+    validate_refresh_token, get_usage_report, configure_usage_persistence,
+    force_persist_usage, TokenPayload, _authorized_keys,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("PrimeAPI")
@@ -55,6 +67,65 @@ async def lifespan(app: FastAPI):
     import time
     t0 = time.time()
     
+    # ─── ISO 27001 A.12.4: Carga de clave HMAC para IntegrityChain ───
+    hmac_key_b64 = os.environ.get("ABBEY_HMAC_KEY")
+    if hmac_key_b64:
+        try:
+            hmac_key = base64.b64decode(hmac_key_b64)
+            integrity_chain = IntegrityChain(hmac_key)
+            logger.info("HMAC key loaded from ABBEY_HMAC_KEY env var.")
+        except Exception as e:
+            logger.error(f"Failed to decode ABBEY_HMAC_KEY: {e}. Generating ephemeral key.")
+            hmac_key = os.urandom(32)
+            integrity_chain = IntegrityChain(hmac_key)
+    else:
+        logger.warning(
+            "SECURITY WARNING: ABBEY_HMAC_KEY not set. "
+            "Generating ephemeral key for DEV mode. "
+            "DO NOT USE IN PRODUCTION."
+        )
+        hmac_key = os.urandom(32)
+        integrity_chain = IntegrityChain(hmac_key)
+    
+    app.state.integrity_chain = integrity_chain
+    
+    # ─── ISO 27001 A.9/A.10: Carga de secreto JWT para Identity ───
+    jwt_secret_b64 = os.environ.get("ABBEY_JWT_SECRET")
+    if jwt_secret_b64:
+        try:
+            jwt_secret = base64.b64decode(jwt_secret_b64)
+            logger.info("JWT secret loaded from ABBEY_JWT_SECRET env var.")
+        except Exception as e:
+            logger.error(f"Failed to decode ABBEY_JWT_SECRET: {e}. Generating ephemeral.")
+            jwt_secret = os.urandom(32)
+    else:
+        logger.warning(
+            "SECURITY WARNING: ABBEY_JWT_SECRET not set. "
+            "Generating ephemeral JWT secret for DEV mode."
+        )
+        jwt_secret = os.urandom(32)
+    
+    jwt_secret_prev_b64 = os.environ.get("ABBEY_JWT_SECRET_PREV")
+    jwt_secret_prev = base64.b64decode(jwt_secret_prev_b64) if jwt_secret_prev_b64 else None
+    
+    # Load legacy API keys for backward-compatible auth
+    from src.api.security import _load_authorized_keys
+    legacy_keys = _load_authorized_keys()
+    
+    configure_identity(
+        jwt_secret=jwt_secret,
+        jwt_secret_prev=jwt_secret_prev,
+        authorized_keys=legacy_keys,
+        access_ttl=int(os.environ.get("ABBEY_ACCESS_TOKEN_TTL", "900")),
+        refresh_ttl=int(os.environ.get("ABBEY_REFRESH_TOKEN_TTL", "604800")),
+    )
+    
+    # CISO FIX #1: Configure usage persistence to JSONL
+    configure_usage_persistence(
+        persist_dir=Path("data/audit_logs"),
+        interval_seconds=int(os.environ.get("ABBEY_USAGE_PERSIST_INTERVAL", "60")),
+    )
+    
     # 2. Build Base Graph (Singleton Graph)
     # Read entire parquets strictly to build the base dict and discard DuckDB handles immediately.
     try:
@@ -67,9 +138,9 @@ async def lifespan(app: FastAPI):
         
         app.state.base_graph, app.state.osm_to_rx, app.state.rx_to_osm = build_directed_graph(df_edges, df_nodes=df_nodes)
         
-        app.state.judge = BayesianJudge(app.state.base_graph)
+        app.state.judge = BayesianJudge(app.state.base_graph, integrity_chain=integrity_chain)
         app.state.judge_standard = app.state.judge  # alias, mismo objeto
-        logger.info("BayesianJudge singleton inicializado.")
+        logger.info("BayesianJudge singleton inicializado con IntegrityChain.")
         
         # --- judge_premium: clon degradado por escenarios estocásticos ---
         stochastic_path = DATA_DIR / "stochastic_priors.parquet"
@@ -78,6 +149,7 @@ async def lifespan(app: FastAPI):
             import copy
             df_stochastic = pd.read_parquet(str(stochastic_path))
             judge_premium = copy.deepcopy(app.state.judge_standard)
+            # El deepcopy hereda la misma IntegrityChain instance (shared)
             n_updated = judge_premium.load_stochastic_overrides(df_stochastic, app.state.osm_to_rx)
             app.state.judge_premium = judge_premium
             logger.info(f"judge_premium instanciado: {n_updated} aristas degradadas por escenarios estocásticos.")
@@ -131,8 +203,12 @@ async def lifespan(app: FastAPI):
         sys.exit(1)
         
     yield
-    # Cleanup on shutdown
-    logger.info("Engine shutting down.")
+    # Cleanup on shutdown — ISO 27001: sanitizar claves de memoria
+    force_persist_usage()  # CISO FIX #1: persist counters before shutdown
+    if hasattr(app.state, 'integrity_chain') and app.state.integrity_chain:
+        app.state.integrity_chain.sanitize_key()
+    sanitize_secrets()  # Zero JWT secrets in memory
+    logger.info("Engine shutting down. HMAC + JWT keys sanitized. Usage persisted.")
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -181,13 +257,16 @@ def _write_audit_log(
     endpoint: str,
     request_payload: dict,
     response_payload: dict,
-    api_key_hash: str,
+    client_id: str,
+    client_name: str,
+    client_role: str,
     processing_ms: float
 ) -> None:
     """
     Escribe registro forense inmutable a disco.
     Diseñado para ser llamado en background sin bloquear el response.
     El hash SHA-256 del payload permite detectar manipulación posterior.
+    Fase 2: Enriquecido con identidad del cliente para facturación.
     """
     try:
         payload_str = json.dumps(request_payload, sort_keys=True, default=str)
@@ -196,7 +275,9 @@ def _write_audit_log(
         record = {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "endpoint": endpoint,
-            "api_key_hash": api_key_hash,
+            "client_id": client_id,
+            "client_name": client_name,
+            "client_role": client_role,
             "processing_ms": round(processing_ms, 2),
             "payload_sha256": payload_hash,
             "request": request_payload,
@@ -231,7 +312,7 @@ async def fleet_endpoint(
     payload: FleetRequest, 
     request: Request,
     background_tasks: BackgroundTasks,
-    api_key: str = Depends(verify_api_key)
+    identity: TokenPayload = Depends(require_role("operator", "admin")),
 ):
     semaphore = request.app.state.fleet_semaphore
     try:
@@ -245,13 +326,26 @@ async def fleet_endpoint(
         )
         if asyncio.iscoroutine(result):
             result = await result
+        
+        # ─── CISO Directive: Propagar flag de integridad al cliente ───
+        judge = request.app.state.judge_premium if (
+            payload.stochastic_mode and getattr(request.app.state, 'judge_premium', None) is not None
+        ) else request.app.state.judge_standard
+        if judge and getattr(judge, 'integrity_compromised', False):
+            result.integrity_compromised = True
+            logger.critical(
+                "INTEGRITY COMPROMISED FLAG SET on /fleet response. "
+                "Routes calculated with conservative priors."
+            )
             
         background_tasks.add_task(
             _write_audit_log,
             endpoint="/fleet",
             request_payload=payload.model_dump(),
             response_payload=result.model_dump(),
-            api_key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
+            client_id=identity.client_id,
+            client_name=identity.client_name,
+            client_role=identity.role,
             processing_ms=result.total_time_ms
         )
         
@@ -271,7 +365,7 @@ async def calculate_route(
     payload: RouteRequest, 
     request: Request,
     background_tasks: BackgroundTasks,
-    api_key: str = Depends(verify_api_key)
+    identity: TokenPayload = Depends(require_role("operator", "admin")),
 ):
     # Obtener el semaforo vivo del estado de la aplicacion
     semaphore = request.app.state.semaphore
@@ -451,7 +545,9 @@ async def calculate_route(
             endpoint="/route",
             request_payload=payload.model_dump(),
             response_payload=result.model_dump(),
-            api_key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
+            client_id=identity.client_id,
+            client_name=identity.client_name,
+            client_role=identity.role,
             processing_ms=proc_time_ms
         )
         
@@ -481,3 +577,97 @@ async def health():
         "ckm_ars": 807.85,
         "ch_ars": 19130.79
     }
+
+# ─────────────────────────────────────────────────────────
+# AUTH ENDPOINTS (Fase 2 SGSI — A.9, A.10)
+# ─────────────────────────────────────────────────────────
+
+# Client registry — loaded from ABBEY_CLIENT_REGISTRY env var
+# Format: "client_id:client_secret:client_name:role,..."
+def _load_client_registry() -> dict:
+    """Load registered clients from environment variable."""
+    registry_str = os.environ.get("ABBEY_CLIENT_REGISTRY", "")
+    if not registry_str:
+        logger.warning(
+            "ABBEY_CLIENT_REGISTRY not set. Using DEV defaults."
+        )
+        return {
+            "dev_operator": {
+                "secret": "ZGV2X3NlY3JldF8xMjM=",  # base64("dev_secret_123")
+                "name": "Dev Operator",
+                "role": "operator",
+            },
+            "dev_admin": {
+                "secret": "YWRtaW5fc2VjcmV0XzEyMw==",  # base64("admin_secret_123")
+                "name": "Dev Admin",
+                "role": "admin",
+            },
+        }
+    registry = {}
+    for entry in registry_str.split(","):
+        parts = entry.strip().split(":")
+        if len(parts) >= 4:
+            cid, secret, name, role = parts[0], parts[1], parts[2], parts[3]
+            registry[cid.strip()] = {
+                "secret": secret.strip(),
+                "name": name.strip(),
+                "role": role.strip(),
+            }
+    return registry
+
+_client_registry = _load_client_registry()
+
+
+@app.post("/auth/token", response_model=TokenResponse)
+async def auth_token(req: TokenRequest):
+    """
+    Issue JWT access + refresh tokens.
+    No authentication required — uses client credentials (client_id + client_secret).
+    """
+    client = _client_registry.get(req.client_id)
+    if not client:
+        raise HTTPException(status_code=401, detail="Unknown client_id")
+    
+    if req.client_secret != client["secret"]:
+        logger.warning("AUTH FAILED: invalid secret for client=%s", req.client_id)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    access = create_access_token(req.client_id, client["name"], client["role"])
+    refresh = create_refresh_token(req.client_id, client["name"], client["role"])
+    
+    return TokenResponse(
+        access_token=access,
+        expires_in=int(os.environ.get("ABBEY_ACCESS_TOKEN_TTL", "900")),
+        refresh_token=refresh,
+    )
+
+
+@app.post("/auth/refresh", response_model=RefreshResponse)
+async def auth_refresh(request: Request):
+    """
+    Refresh an access token using a valid refresh token.
+    Refresh token must be sent as Bearer in Authorization header.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing refresh token")
+    
+    refresh_token = auth_header[7:]
+    identity = validate_refresh_token(refresh_token)
+    
+    new_access = create_access_token(
+        identity.client_id, identity.client_name, identity.role
+    )
+    
+    return RefreshResponse(
+        access_token=new_access,
+        expires_in=int(os.environ.get("ABBEY_ACCESS_TOKEN_TTL", "900")),
+    )
+
+
+@app.get("/admin/usage")
+async def admin_usage(
+    identity: TokenPayload = Depends(require_role("admin")),
+):
+    """Usage report per client — admin only. Pay-per-Request foundation."""
+    return get_usage_report()
