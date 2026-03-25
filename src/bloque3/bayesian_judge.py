@@ -47,6 +47,19 @@ class BayesianJudge:
         self._integrity = integrity_chain
         self._initialize_priors()
 
+    def __deepcopy__(self, memo):
+        import copy
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == '_integrity':
+                # IntegrityChain contains a threading.Lock, share the instance
+                setattr(result, k, v)
+            else:
+                setattr(result, k, copy.deepcopy(v, memo))
+        return result
+
     @property
     def integrity_compromised(self) -> bool:
         """Proxy al estado de integridad de la cadena HMAC."""

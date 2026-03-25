@@ -181,7 +181,6 @@ async def lifespan(app: FastAPI):
         
         try:
             import psutil
-            import os
             process = psutil.Process(os.getpid())
             ram_mb = process.memory_info().rss / 1024 / 1024
         except ImportError:
