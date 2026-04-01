@@ -47,7 +47,7 @@ const DEFAULTS = {
   custodia_hora_ars: 0.0,
   franquicia_seguro_usd: 1500.0,
 
-  departure_time: "06:00",
+  departure_time: "05:00",
   stochastic_mode: false
 };
 
