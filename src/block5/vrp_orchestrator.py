@@ -586,7 +586,9 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
         
         try:
             base_net = request.app.state.mc_network_snapshot
-            manifest = ManifestLoader.load("../../data/incident_manifest.yaml")
+            from pathlib import Path
+            manifest_path = Path(__file__).resolve().parent.parent.parent / "data" / "incident_manifest.yaml"
+            manifest = ManifestLoader.load(str(manifest_path))
             
             generator = MonteCarloGenerator(base_net, manifest, seed=42)
             engine = MonteCarloEngine(generator)
