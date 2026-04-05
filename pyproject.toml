@@ -19,6 +19,7 @@ dependencies = [
     "slowapi>=0.1.9",
     "uvicorn==0.41.0",
     "pyjwt (>=2.8.0)",
+    "orjson>=3.9.0",
 ]
 
 [tool.pyright]
