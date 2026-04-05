@@ -201,6 +201,7 @@ class EdgeRiskReport(BaseModel):
     edge_key: str
     prob_failure: float
     impact_mean: float
+    geometry: List[List[float]] = []
 
 class NetworkRiskReport(BaseModel):
     """Reporte consolidado de la red bayesiana post-Monte Carlo."""
@@ -210,6 +211,7 @@ class NetworkRiskReport(BaseModel):
     monte_carlo_iterations: int
     convergence_reached: bool
     edges: List[EdgeRiskReport] = []
+    executive_dictamen: List[str] = []
 
 class RouteResponse(BaseModel):
     processing_time_ms: float

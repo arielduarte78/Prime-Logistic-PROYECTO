@@ -236,16 +236,26 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
           
           {networkRisk && (
             <div className="absolute top-4 left-4 z-[999] bg-slate-900/90 backdrop-blur-sm 
-                            text-white px-4 py-3 rounded-2xl shadow-2xl border border-white/10 pointer-events-none">
+                            text-white px-4 py-3 rounded-2xl shadow-2xl border border-white/10 pointer-events-none max-w-md">
               <div className="text-[9px] font-black uppercase tracking-[0.3em] text-amber-400 mb-1">
                 Riesgo de Red (AMBA)
               </div>
               <div className="text-2xl font-black tabular-nums">
                 {(networkRisk.system_prob_failure * 100).toFixed(1)}%
               </div>
-              <div className="text-[10px] text-slate-400 mt-1">
+              <div className="text-[10px] text-slate-400 mt-1 mb-2">
                 {networkRisk.total_edges_evaluated.toLocaleString()} aristas evaluadas
               </div>
+              
+              {networkRisk.executive_dictamen && networkRisk.executive_dictamen.length > 0 && (
+                <div className="mt-3 bg-slate-950/80 rounded-xl p-3 border-l-2 border-amber-500 shadow-inner">
+                  {networkRisk.executive_dictamen.map((line, idx) => (
+                    <p key={idx} className="text-[10px] text-slate-300 mb-1.5 last:mb-0 font-medium leading-relaxed">
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -271,6 +281,23 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
           <MapContainer center={MAP_CONFIG.center} zoom={MAP_CONFIG.zoom}
             style={{ height: '100%', width: '100%' }} className="z-0">
             <TileLayer url={MAP_CONFIG.tileUrl} attribution={MAP_CONFIG.attribution} />
+
+            {/* HEATMAP RISK (Capa Base de Calor Vial) */}
+            {(networkRisk?.edges || []).map((edge, idx) => {
+              if (!edge.geometry || edge.geometry.length < 2) return null;
+              return (
+                <Polyline
+                  key={`risk-heat-${idx}`}
+                  positions={edge.geometry}
+                  pathOptions={{
+                    color: getRiskColor('#EF4444', edge.prob_failure),
+                    weight: 4,
+                    opacity: 0.5,
+                  }}
+                  smoothFactor={1}
+                />
+              );
+            })}
 
             {/* TAREA 2: Sincronía Total con el Cerebro (Backend Coordinates) */}
             {(plans[selectedArchetype]?.segments_pareto || []).map((segment, sIdx) => {

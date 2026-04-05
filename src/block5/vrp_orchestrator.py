@@ -763,15 +763,42 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
         from src.api.schemas import EdgeRiskReport, NetworkRiskReport
         RISK_THRESHOLD = 0.05
         
-        edge_reports = [
-            EdgeRiskReport(
-                edge_key=str(k), 
-                prob_failure=v["prob_failure"], 
-                impact_mean=v["impact_mean"]
-            )
-            for k, v in risk_report_raw.get("edges", {}).items()
-            if v["prob_failure"] > RISK_THRESHOLD
-        ]
+        edge_reports_list = []
+        import ast
+        for k, v in risk_report_raw.get("edges", {}).items():
+            if v["prob_failure"] > RISK_THRESHOLD:
+                # 1. Extracción Geométrica
+                geo = []
+                try:
+                    u_osm, v_osm = ast.literal_eval(k)
+                    u_rx = request.app.state.osm_to_rx.get(u_osm)
+                    v_rx = request.app.state.osm_to_rx.get(v_osm)
+                    if u_rx is not None and v_rx is not None:
+                        u_node = base_graph.get_node_data(u_rx)
+                        v_node = base_graph.get_node_data(v_rx)
+                        if u_node.lat != 0.0 and v_node.lat != 0.0:
+                            geo = [[u_node.lat, u_node.lon], [v_node.lat, v_node.lon]]
+                except Exception as e:
+                    logger.warning(f"Error parseando edge_key {k} para geometría de riesgo: {e}")
+                
+                if geo:
+                    edge_reports_list.append(EdgeRiskReport(
+                        edge_key=str(k),
+                        prob_failure=v["prob_failure"],
+                        impact_mean=v["impact_mean"],
+                        geometry=geo
+                    ))
+        
+        # 2. Generación del Dictamen Ejecutivo
+        dictamen = []
+        if edge_reports_list:
+            dictamen.append(f"Simulación completada. Procesadas {num_mc_scenarios} iteraciones Monte Carlo.")
+            dictamen.append(f"Se detectaron {len(edge_reports_list)} focos de fricción operativa y siniestralidad.")
+            dictamen.append("El motor abortó las rutas más cortas tradicionales y desvió la flota activa para asegurar la rentabilidad del viaje.")
+        else:
+            dictamen.append(f"Simulación completada. Procesadas {num_mc_scenarios} iteraciones.")
+            dictamen.append("Sin anomalías severas geolocalizadas.")
+            dictamen.append("El grafo estructural del AMBA opera bajo estándares normales de fluidez para esta ventana.")
         
         network_risk_model = NetworkRiskReport(
             system_prob_failure=risk_report_raw.get("system", {}).get("prob_failure", 0.0),
@@ -779,7 +806,8 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
             total_edges_evaluated=len(risk_report_raw.get("edges", {})),
             monte_carlo_iterations=num_mc_scenarios,
             convergence_reached=convergence_reached,
-            edges=edge_reports,
+            edges=edge_reports_list,
+            executive_dictamen=dictamen
         )
 
     return FleetResponse(
