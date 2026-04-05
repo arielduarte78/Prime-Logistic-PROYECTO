@@ -46,6 +46,35 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
   const plans = fleetResponse?.plans || {};
   const destinations = parsedPayload?.destinations || [];
 
+  const networkRisk = fleetResponse?.network_risk;
+  const edgeRiskMap = useMemo(() => {
+    if (!networkRisk?.edges) return {};
+    const map = {};
+    networkRisk.edges.forEach(e => { map[e.edge_key] = e.prob_failure; });
+    return map;
+  }, [networkRisk]);
+
+  function getRiskColor(baseColor, probFailure) {
+    if (probFailure === null || probFailure === undefined) return baseColor;
+    if (probFailure < 0.15) return baseColor;
+    if (probFailure < 0.40) return '#F59E0B';
+    if (probFailure < 0.70) return '#EF4444';
+    return '#991B1B';
+  }
+
+  function getMaxSegmentRisk(routeNodes, riskMap) {
+    if (!routeNodes || !riskMap) return 0;
+    let maxRisk = 0;
+    for (let i = 0; i < routeNodes.length - 1; i++) {
+        const u = routeNodes[i];
+        const v = routeNodes[i+1];
+        const risk = riskMap[`${u}:${v}`] || 0;
+        if (risk > maxRisk) maxRisk = risk;
+    }
+    return maxRisk;
+  }
+
+
   // ─── Vehicle filter state ───
   const [visibleVehicles, setVisibleVehicles] = useState(null);
 
@@ -204,6 +233,41 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
       <div className="flex flex-1 min-h-0">
         {/* Map */}
         <div className="flex-[7] relative">
+          
+          {networkRisk && (
+            <div className="absolute top-4 left-4 z-[999] bg-slate-900/90 backdrop-blur-sm 
+                            text-white px-4 py-3 rounded-2xl shadow-2xl border border-white/10 pointer-events-none">
+              <div className="text-[9px] font-black uppercase tracking-[0.3em] text-amber-400 mb-1">
+                Riesgo de Red (AMBA)
+              </div>
+              <div className="text-2xl font-black tabular-nums">
+                {(networkRisk.system_prob_failure * 100).toFixed(1)}%
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1">
+                {networkRisk.total_edges_evaluated.toLocaleString()} aristas evaluadas
+              </div>
+            </div>
+          )}
+
+          {networkRisk && (
+            <div className="absolute bottom-4 right-4 z-[999] bg-white/90 backdrop-blur-sm 
+                            px-4 py-3 rounded-xl shadow-lg border border-slate-200 pointer-events-none">
+              <div className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-2">
+                Probabilidad de Fallo (Bayesian Judge)
+              </div>
+              {[
+                { color: '#22C55E', label: '< 15% (Riesgo Normal)' },
+                { color: '#F59E0B', label: '15–40% (Riesgo Moderado)' },
+                { color: '#EF4444', label: '40–70% (Riesgo Alto)' },
+                { color: '#991B1B', label: '> 70% (Riesgo Crítico)' },
+              ].map(({ color, label }) => (
+                <div key={color} className="flex items-center gap-2 text-xs text-slate-700 mt-1 font-medium">
+                  <div className="w-6 h-1.5 rounded-full" style={{ background: color }} />
+                  <span>{label}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <MapContainer center={MAP_CONFIG.center} zoom={MAP_CONFIG.zoom}
             style={{ height: '100%', width: '100%' }} className="z-0">
             <TileLayer url={MAP_CONFIG.tileUrl} attribution={MAP_CONFIG.attribution} />
@@ -220,16 +284,20 @@ export default function MapView({ fleetResponse, selectedArchetype, parsedPayloa
 
               if (!isVehicleVisible(vehicleId)) return null;
 
+              const segmentRisk = getMaxSegmentRisk(solution.route_nodes, edgeRiskMap);
+              const finalColor = getRiskColor(color, segmentRisk);
+
               return (
                 <Polyline
                   key={`route-segment-${selectedArchetype}-${sIdx}`}
                   positions={solution.route_coordinates}
                   pathOptions={{
-                    color,
-                    weight: 6,
+                    color: finalColor,
+                    weight: segmentRisk > 0.15 ? 8 : 6,
                     opacity: 1.0,
+                    lineJoin: 'round',
                     lineCap: 'round',
-                    lineJoin: 'round'
+                    dashArray: segmentRisk > 0.40 ? '10, 6' : undefined,
                   }}
                   smoothFactor={1}
                 />

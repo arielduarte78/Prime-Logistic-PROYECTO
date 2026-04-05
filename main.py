@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, Depends, BackgroundTasks, Security
+from fastapi.responses import ORJSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -138,18 +139,22 @@ async def lifespan(app: FastAPI):
         
         app.state.base_graph, app.state.osm_to_rx, app.state.rx_to_osm = build_directed_graph(df_edges, df_nodes=df_nodes)
         
+        # ─── Bloque 2: Pre-computar base network para Monte Carlo dinámico ───
+        from src.bloque2.graph_adapter import get_matrices, build_network_snapshot_from_rx
+        app.state.mc_matrices = get_matrices(app.state.base_graph)
+        app.state.mc_network_snapshot = build_network_snapshot_from_rx(app.state.base_graph)
+        
         app.state.judge = BayesianJudge(app.state.base_graph, integrity_chain=integrity_chain)
         app.state.judge_standard = app.state.judge  # alias, mismo objeto
         logger.info("BayesianJudge singleton inicializado con IntegrityChain.")
         
-        # --- judge_premium: clon degradado por escenarios estocásticos ---
+        # --- judge_premium: clon pre-calculado por escenarios estocásticos fijos ---
         stochastic_path = DATA_DIR / "stochastic_priors.parquet"
         if stochastic_path.exists():
             import pandas as pd
-            import copy
             df_stochastic = pd.read_parquet(str(stochastic_path))
-            judge_premium = copy.deepcopy(app.state.judge_standard)
-            # El deepcopy hereda la misma IntegrityChain instance (shared)
+            judge_premium = app.state.judge_standard.spawn_ephemeral_clone()
+            # El clon efímero hereda la misma IntegrityChain instance (shared)
             n_updated = judge_premium.load_stochastic_overrides(df_stochastic, app.state.osm_to_rx)
             app.state.judge_premium = judge_premium
             logger.info(f"judge_premium instanciado: {n_updated} aristas degradadas por escenarios estocásticos.")
@@ -304,8 +309,8 @@ def _write_audit_log(
     except Exception as e:
         logger.error(f"Audit log write failed: {e}")
 
-@app.post('/fleet', response_model=FleetResponse)
-@app.post('/fleet/', response_model=FleetResponse)
+@app.post('/fleet', response_model=FleetResponse, response_class=ORJSONResponse)
+@app.post('/fleet/', response_model=FleetResponse, response_class=ORJSONResponse)
 @limiter.limit("10/minute;100/hour")
 async def fleet_endpoint(
     payload: FleetRequest, 
@@ -357,8 +362,8 @@ async def fleet_endpoint(
     finally:
         semaphore.release()
 
-@app.post('/route', response_model=RouteResponse)
-@app.post('/route/', response_model=RouteResponse)
+@app.post('/route', response_model=RouteResponse, response_class=ORJSONResponse)
+@app.post('/route/', response_model=RouteResponse, response_class=ORJSONResponse)
 @limiter.limit("10/minute;100/hour")
 async def calculate_route(
     payload: RouteRequest, 

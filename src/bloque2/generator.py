@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from scipy.sparse import issparse
 import scipy.sparse as sp
 
-from bloque2.incidents import (
+from src.bloque2.incidents import (
     Manifest, IncidentDefinition, Category, TargetType, AdjacencyAction
 )
 
@@ -105,34 +105,48 @@ class NetworkActor:
                        indices: List[int], S: float, params: Any) -> float:
         m = 1.0
 
-        # 1. Kill-switch (A y K)
+        if not indices:
+            return m
+
+        # 1. Kill-switch (A y K) - Exclusivamente sobre .data (Zero Structural Mutation)
         if incident.structural_effects.adjacency.action == AdjacencyAction.DISABLE:
             if issparse(net.A):
                 n = net.A.shape[0]
-                mask = np.ones(n, dtype=np.float64)
-                mask[indices] = 0.0
-                diag = sp.diags(mask, format="csr")
-                net.A = diag.dot(net.A).dot(diag)
-                net.K = diag.dot(net.K).dot(diag)
+                
+                # SIMD Mask para inhabilitar destinos (entrantes)
+                disabled_mask = np.zeros(n, dtype=bool)
+                disabled_mask[indices] = True
+                
+                in_mask_A = disabled_mask[net.A.indices]
+                net.A.data[in_mask_A] = 0.0
+                
+                in_mask_K = disabled_mask[net.K.indices]
+                net.K.data[in_mask_K] = 0.0
+                
+                # Inhabilitar orígenes (salientes) recorriendo CSR indptr
+                for idx in indices:
+                    start_A, end_A = net.A.indptr[idx], net.A.indptr[idx + 1]
+                    net.A.data[start_A:end_A] = 0.0
+                    
+                    start_K, end_K = net.K.indptr[idx], net.K.indptr[idx + 1]
+                    net.K.data[start_K:end_K] = 0.0
             else:
                 for idx in indices:
-                    net.A[idx, :] = 0
-                    net.A[:, idx] = 0
-                    net.K[idx, :] = 0
-                    net.K[:, idx] = 0
+                    net.A[idx, :] = 0.0
+                    net.A[:, idx] = 0.0
+                    net.K[idx, :] = 0.0
+                    net.K[:, idx] = 0.0
 
         # 2. Capacidad (Solo si es Sistémico)
         if (incident.level == Category.SYSTEMIC and
                 incident.structural_effects.capacity.modifier != 1.0):
-            if issparse(net.K) and not isinstance(net.K, sp.csr_matrix):
-                net.K = net.K.tocsr()
-            for idx in indices:
-                if issparse(net.K):
-                    net.K.data[net.K.indptr[idx]:net.K.indptr[idx + 1]] *= (
-                        incident.structural_effects.capacity.modifier
-                    )
-                else:
-                    net.K[idx, :] *= incident.structural_effects.capacity.modifier
+            mod = incident.structural_effects.capacity.modifier
+            if issparse(net.K):
+                for idx in indices:
+                    net.K.data[net.K.indptr[idx]:net.K.indptr[idx + 1]] *= mod
+            else:
+                for idx in indices:
+                    net.K[idx, :] *= mod
 
         # 3. Métricas (C, T, D)
         for impact in incident.metric_impacts:
@@ -140,11 +154,13 @@ class NetworkActor:
             m = IntensityEvaluator.calcular_multiplicador(impact.base_multiplier, S, coef)
 
             target_matrix = getattr(net, impact.metric)
-            for idx in indices:
-                if issparse(target_matrix):
+            if issparse(target_matrix):
+                for idx in indices:
                     target_matrix.data[target_matrix.indptr[idx]:target_matrix.indptr[idx + 1]] *= m
-                else:
+            else:
+                for idx in indices:
                     target_matrix[idx, :] *= m
+                    
         return m
 
 
@@ -226,14 +242,24 @@ class MonteCarloEngine:
             retention = s_obj.get_capacity_reduction()
 
             # 3. CREAMOS EL DICCIONARIO LIVIANO (Lo que el Auditor.py espera)
+            #    PRESERVAMOS la topología completa para que Bloque 3 pueda
+            #    mapear las perturbaciones estocásticas a aristas concretas.
             s_lite = {
                 "scenario_id": str(s_obj.scenario_id),
                 "capacity_retained": retention,
                 "stress_index": s_obj.stress_index,
-                "events": [{"code": e.code} for e in s_obj.events],
-                # Podés agregar métricas de costo/tiempo si las calculás acá
-                "total_cost": 10.80,  # Ejemplo basado en tu salida anterior
-                "base_cost": 10.00
+                "events": [
+                    {
+                        "code": e.code,
+                        "level": e.level,
+                        "p_effective": e.p_effective,
+                        "intensity_multiplier": e.intensity_multiplier,
+                        "affected_indices": list(e.affected_indices),
+                    }
+                    for e in s_obj.events
+                ],
+                "total_cost": 10.80,
+                "base_cost": 10.00,
             }
 
             results.append(s_lite)

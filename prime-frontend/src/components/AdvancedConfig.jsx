@@ -400,8 +400,8 @@ export default function AdvancedConfig({ onChange }) {
 
             <div className="flex items-center gap-8 bg-slate-900 p-8 rounded-[2.5rem] shadow-2xl flex-1 w-full border border-slate-800">
               <div>
-                <h4 className="text-white font-black text-sm uppercase tracking-widest mb-1 italic">Modo Estocástico</h4>
-                <p className="text-slate-400 text-[10px] font-medium leading-relaxed max-w-[200px]">Simulación de riesgo dinámica para contingencias en ruta.</p>
+                <h4 className="text-white font-black text-sm uppercase tracking-widest mb-1 italic">Ruteo con Mitigación de Riesgos (AMBA)</h4>
+                <p className="text-slate-400 text-[10px] font-medium leading-relaxed max-w-[200px]">Analiza el historial de siniestros, cortes y congestión para calcular la ruta financieramente más segura. Desactivado, asume que no hay imprevistos en la calle.</p>
               </div>
               <button
                 onClick={() => update('stochastic_mode', !config.stochastic_mode)}

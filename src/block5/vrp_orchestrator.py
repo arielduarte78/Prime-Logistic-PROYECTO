@@ -573,9 +573,40 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
     speed_profiles = request.app.state.speed_profiles
     logger.info(f"VRP departure_hour resolved to {departure_hour}")
 
-    judge = request.app.state.judge_premium if (
-        payload.stochastic_mode and getattr(request.app.state, 'judge_premium', None) is not None
-    ) else request.app.state.judge
+    risk_report_raw = None
+    num_mc_scenarios = 0
+    convergence_reached = False
+    
+    if payload.stochastic_mode:
+        from src.bloque2.stochastic_adapter import StochasticBayesAdapter
+        from src.bloque2.generator import MonteCarloGenerator, MonteCarloEngine
+        from src.bloque2.incidents import ManifestLoader
+        
+        judge = request.app.state.judge.spawn_ephemeral_clone()
+        
+        try:
+            base_net = request.app.state.mc_network_snapshot
+            manifest = ManifestLoader.from_yaml("data/incident_manifest.yaml")
+            
+            generator = MonteCarloGenerator(base_net, manifest, seed=42)
+            engine = MonteCarloEngine(generator)
+            scenarios = engine.run(max_iter=500, window=50, e_limit=0.001)
+            
+            num_mc_scenarios = len(scenarios)
+            convergence_reached = num_mc_scenarios < 500
+            
+            adapter = StochasticBayesAdapter.from_graph(base_graph)
+            adapter.ingest(scenarios)
+            overrides_df = adapter.to_overrides_df()
+            
+            judge.load_stochastic_overrides(overrides_df, request.app.state.osm_to_rx)
+            risk_report_raw = judge.reliability_report()
+            logger.info("Dynamic Stochastic Engine execution complete.")
+        except Exception as e:
+            logger.error(f"Failed to execute dynamic stochastic engine: {e}")
+            judge = request.app.state.judge
+    else:
+        judge = request.app.state.judge
 
     logger.info("Phase 1: Bounding Box Filter directly from app.state.base_graph...")
     t0_p1 = time.time()
@@ -727,6 +758,30 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
         getattr(d, "tw_start_min", 0) != 0 or getattr(d, "tw_end_min", 1440) != 1440 
         for d in payload.destinations
     )
+    network_risk_model = None
+    if risk_report_raw:
+        from src.api.schemas import EdgeRiskReport, NetworkRiskReport
+        RISK_THRESHOLD = 0.05
+        
+        edge_reports = [
+            EdgeRiskReport(
+                edge_key=str(k), 
+                prob_failure=v["prob_failure"], 
+                impact_mean=v["impact_mean"]
+            )
+            for k, v in risk_report_raw.get("edges", {}).items()
+            if v["prob_failure"] > RISK_THRESHOLD
+        ]
+        
+        network_risk_model = NetworkRiskReport(
+            system_prob_failure=risk_report_raw.get("system", {}).get("prob_failure", 0.0),
+            system_impact_mean=risk_report_raw.get("system", {}).get("impact_mean", 0.0),
+            total_edges_evaluated=len(risk_report_raw.get("edges", {})),
+            monte_carlo_iterations=num_mc_scenarios,
+            convergence_reached=convergence_reached,
+            edges=edge_reports,
+        )
+
     return FleetResponse(
         subgraph_edges=total_edges_subgraph,
         total_time_ms=total_time_ms,
@@ -734,5 +789,6 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
         toll_fallback_edges=total_fallback_edges,
         plans=archetype_plans,
         time_windows_enforced=has_real_windows,
-        shift_limit_enforced=shift_limit_enforced
+        shift_limit_enforced=shift_limit_enforced,
+        network_risk=network_risk_model
     )

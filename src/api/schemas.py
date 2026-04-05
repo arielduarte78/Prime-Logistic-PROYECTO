@@ -196,6 +196,21 @@ class ParetoResult(BaseModel):
     confidence: float
     cost_breakdown: Optional[CostBreakdown] = None
 
+class EdgeRiskReport(BaseModel):
+    """Reporte de riesgo de una arista individual."""
+    edge_key: str
+    prob_failure: float
+    impact_mean: float
+
+class NetworkRiskReport(BaseModel):
+    """Reporte consolidado de la red bayesiana post-Monte Carlo."""
+    system_prob_failure: float
+    system_impact_mean: float
+    total_edges_evaluated: int
+    monte_carlo_iterations: int
+    convergence_reached: bool
+    edges: List[EdgeRiskReport] = []
+
 class RouteResponse(BaseModel):
     processing_time_ms: float
     total_edges: int
@@ -230,6 +245,13 @@ class FleetResponse(BaseModel):
             "debido a una violación de integridad en la cadena HMAC de los "
             "Priors bayesianos. El cliente debe tratar estas rutas como "
             "calculadas con priors conservadores por defecto."
+        )
+    )
+    network_risk: Optional[NetworkRiskReport] = Field(
+        default=None,
+        description=(
+            "Reporte de riesgo bayesiano de la red. Solo presente cuando "
+            "stochastic_mode=True en la request."
         )
     )
 
