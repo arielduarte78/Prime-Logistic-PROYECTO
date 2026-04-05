@@ -763,7 +763,7 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
     network_risk_model = None
     if risk_report_raw:
         from src.api.schemas import EdgeRiskReport, NetworkRiskReport
-        RISK_THRESHOLD = 0.05
+        RISK_THRESHOLD = 0.00
         
         edge_reports_list = []
         import ast
