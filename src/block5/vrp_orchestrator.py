@@ -772,14 +772,12 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
                 # 1. Extracción Geométrica
                 geo = []
                 try:
-                    u_osm, v_osm = ast.literal_eval(k)
-                    u_rx = request.app.state.osm_to_rx.get(u_osm)
-                    v_rx = request.app.state.osm_to_rx.get(v_osm)
-                    if u_rx is not None and v_rx is not None:
-                        u_node = base_graph.get_node_data(u_rx)
-                        v_node = base_graph.get_node_data(v_rx)
-                        if u_node.lat != 0.0 and v_node.lat != 0.0:
-                            geo = [[u_node.lat, u_node.lon], [v_node.lat, v_node.lon]]
+                    u_str, v_str = k.split(":")
+                    u_rx, v_rx = int(u_str), int(v_str)
+                    u_node = base_graph[u_rx]
+                    v_node = base_graph[v_rx]
+                    if hasattr(u_node, 'lat') and u_node.lat != 0.0 and v_node.lat != 0.0:
+                        geo = [[u_node.lat, u_node.lon], [v_node.lat, v_node.lon]]
                 except Exception as e:
                     logger.warning(f"Error parseando edge_key {k} para geometría de riesgo: {e}")
                 
