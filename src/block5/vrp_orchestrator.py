@@ -233,7 +233,8 @@ def _compute_archetype_plan(
     speed_profiles: dict,
     p2_subgraph_nodes: set,
     shift_start_minutes: int = 480,
-    departure_time: str = None
+    departure_time: str = None,
+    shared_pareto_cache: dict = None
 ) -> tuple:
     
     fallback_counter = [0]
@@ -363,6 +364,22 @@ def _compute_archetype_plan(
             leg_key = (source_idx, target_idx)
             if leg_key in leg_real_distances: continue
 
+            if shared_pareto_cache is not None and leg_key in shared_pareto_cache:
+                # ─── CACHE HIT: Reutilizar Pareto resuelto por otro hilo ───
+                cached = shared_pareto_cache[leg_key]
+                leg_sols = cached["leg_sols"]
+                if archetype in cached["arch_data"]:
+                    leg_real_distances[leg_key] = cached["arch_data"][archetype]["dist"]
+                    leg_coords[leg_key] = cached["arch_data"][archetype]["coords"]
+                
+                legs_evaluations.append({
+                    "source_osm": rx_to_osm[source_idx],
+                    "target_osm": rx_to_osm[target_idx],
+                    "pareto_solutions": leg_sols
+                })
+                legs_count += 1
+                continue
+
             s_rx = nodes_of_interest[source_idx]
             t_rx = nodes_of_interest[target_idx]
             
@@ -394,6 +411,9 @@ def _compute_archetype_plan(
             engine = MultiObjectiveEngine(eps_1=0.1, eps_2=50.0, max_total_labels=150000)
             frontier_labels = engine.solve(legacy_graph, str(s_rx), str(t_rx), node_coords=node_coords)
 
+            leg_sols = []
+            arch_data = {}
+
             if frontier_labels:
                 pareto_result = ParetoFrontResult.from_labels(frontier_labels, engine)
                 archetipos_inner = {
@@ -402,7 +422,7 @@ def _compute_archetype_plan(
                     "equilibrista": pareto_result.extract_tightrope(),
                     "unicornio": pareto_result.extract_unicorn(),
                 }
-                leg_sols = []
+                
                 soluciones_validas = [s for s in archetipos_inner.values() if s is not None]
                 if soluciones_validas:
                     w_min = min(s.w_survival for s in soluciones_validas)
@@ -420,8 +440,11 @@ def _compute_archetype_plan(
                             if hasattr(node_payload, 'lat') and node_payload.lat != 0.0:
                                 coords.append([node_payload.lat, node_payload.lon])
                         
+                        dist = _coord_distance_km(coords) if coords else 0.0
+                        arch_data[arch_name] = {"dist": dist, "coords": coords}
+
                         if arch_name == archetype:
-                            leg_real_distances[leg_key] = _coord_distance_km(coords)
+                            leg_real_distances[leg_key] = dist
                             leg_coords[leg_key] = coords
 
                         leg_sols.append(ParetoResult(
@@ -433,12 +456,19 @@ def _compute_archetype_plan(
                             confidence=normalize_confidence(sol.w_survival)
                         ))
 
-                legs_evaluations.append({
-                    "source_osm": rx_to_osm[s_rx],
-                    "target_osm": rx_to_osm[t_rx],
-                    "pareto_solutions": leg_sols
-                })
-                legs_count += 1
+            # ─── POPULAR CACHE COMPARTIDA PARA LOS DEMÁS HILOS ───
+            if shared_pareto_cache is not None:
+                shared_pareto_cache[leg_key] = {
+                    "leg_sols": leg_sols,
+                    "arch_data": arch_data
+                }
+
+            legs_evaluations.append({
+                "source_osm": rx_to_osm[s_rx],
+                "target_osm": rx_to_osm[t_rx],
+                "pareto_solutions": leg_sols
+            })
+            legs_count += 1
 
     total_w_survival = 0.0
     total_w_cost = 0.0
@@ -576,39 +606,6 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
     risk_report_raw = None
     num_mc_scenarios = 0
     convergence_reached = False
-    
-    if payload.stochastic_mode:
-        from src.bloque2.stochastic_adapter import StochasticBayesAdapter
-        from src.bloque2.generator import MonteCarloGenerator, MonteCarloEngine
-        from src.bloque2.incidents import ManifestLoader
-        
-        judge = request.app.state.judge.spawn_ephemeral_clone()
-        
-        try:
-            base_net = request.app.state.mc_network_snapshot
-            from pathlib import Path
-            manifest_path = Path(__file__).resolve().parent.parent.parent / "data" / "incident_manifest.yaml"
-            manifest = ManifestLoader.load(str(manifest_path))
-            
-            generator = MonteCarloGenerator(base_net, manifest, seed=42)
-            engine = MonteCarloEngine(generator)
-            scenarios = engine.run(max_iter=500, window=50, e_limit=0.001)
-            
-            num_mc_scenarios = len(scenarios)
-            convergence_reached = num_mc_scenarios < 500
-            
-            adapter = StochasticBayesAdapter.from_graph(base_graph)
-            adapter.ingest(scenarios)
-            overrides_df = adapter.to_overrides_df()
-            
-            judge.load_stochastic_overrides(overrides_df, request.app.state.osm_to_rx)
-            risk_report_raw = judge.reliability_report()
-            logger.info("Dynamic Stochastic Engine execution complete.")
-        except Exception as e:
-            logger.error(f"Failed to execute dynamic stochastic engine: {e}")
-            judge = request.app.state.judge
-    else:
-        judge = request.app.state.judge
 
     logger.info("Phase 1: Bounding Box Filter directly from app.state.base_graph...")
     t0_p1 = time.time()
@@ -692,6 +689,39 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
     p2_subgraph_nodes.update(nodes_of_interest)
     logger.info(f"Phase 2 subgraph: {len(p2_subgraph_nodes):,} nodos (vs {len(base_graph):,} total)")
 
+    if payload.stochastic_mode:
+        from src.bloque2.stochastic_adapter import StochasticBayesAdapter
+        from src.bloque2.generator import MonteCarloGenerator, MonteCarloEngine
+        from src.bloque2.incidents import ManifestLoader
+        
+        judge = request.app.state.judge.spawn_ephemeral_clone()
+        
+        try:
+            base_net = request.app.state.mc_network_snapshot
+            from pathlib import Path
+            manifest_path = Path(__file__).resolve().parent.parent.parent / "data" / "incident_manifest.yaml"
+            manifest = ManifestLoader.load(str(manifest_path))
+            
+            generator = MonteCarloGenerator(base_net, manifest, seed=42)
+            engine = MonteCarloEngine(generator)
+            scenarios = engine.run(max_iter=500, window=50, e_limit=0.001)
+            
+            num_mc_scenarios = len(scenarios)
+            convergence_reached = num_mc_scenarios < 500
+            
+            adapter = StochasticBayesAdapter.from_graph(base_graph, subgraph_nodes=p2_subgraph_nodes)
+            adapter.ingest(scenarios)
+            overrides_df = adapter.to_overrides_df()
+            
+            judge.load_stochastic_overrides(overrides_df, request.app.state.osm_to_rx)
+            risk_report_raw = judge.reliability_report()
+            logger.info("Dynamic Stochastic Engine execution complete.")
+        except Exception as e:
+            logger.error(f"Failed to execute dynamic stochastic engine: {e}")
+            judge = request.app.state.judge
+    else:
+        judge = request.app.state.judge
+
     # ─── INYECCIÓN CFO DIRECTA ───
     if payload.economic_profile:
         client_cost_env = payload.economic_profile
@@ -718,6 +748,7 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
     max_shift_per_vehicle = [v.max_shift_minutes for v in payload.vehicles]
 
     loop = asyncio.get_event_loop()
+    shared_pareto_cache = {}
     archetype_futures = [
         loop.run_in_executor(
             _archetype_executor,
@@ -742,7 +773,8 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
             speed_profiles,
             p2_subgraph_nodes,
             payload.shift_start_minutes,
-            payload.departure_time
+            payload.departure_time,
+            shared_pareto_cache
         )
         for archetype in available_archetypes
     ]

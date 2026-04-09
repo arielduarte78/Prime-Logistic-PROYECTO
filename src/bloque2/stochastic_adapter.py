@@ -158,8 +158,8 @@ class StochasticBayesAdapter:
         beta_degraded = np.clip(beta_degraded, 0.0, self._config.clamp_beta_max)
         
         df = pd.DataFrame({
-            "u_osm": self._U[mask_affected].astype(float),
-            "v_osm": self._V[mask_affected].astype(float),
+            "u_rx": self._U[mask_affected].astype(int),
+            "v_rx": self._V[mask_affected].astype(int),
             "alpha_degraded": self._alphas_arr[mask_affected],
             "beta_degraded": beta_degraded
         })
@@ -179,13 +179,14 @@ class StochasticBayesAdapter:
         logger.info("Adapter state reset (NumPy buffer cleared).")
 
     @staticmethod
-    def from_graph(graph: Any, config: AdapterConfig | None = None) -> "StochasticBayesAdapter":
+    def from_graph(graph: Any, subgraph_nodes: set | None = None, config: AdapterConfig | None = None) -> "StochasticBayesAdapter":
         """
         Factory alternativo: construye el adaptador directamente desde
         un grafo rustworkx con EdgePayload adjunto.
 
         Args:
             graph: rx.PyDiGraph con EdgePayload en cada arista.
+            subgraph_nodes: Opcionalmente iterar solo sobre un subgrafo (mejora O(1)->~30k vs 500k aristas)
             config: Parámetros de calibración opcionales.
 
         Returns:
@@ -197,6 +198,8 @@ class StochasticBayesAdapter:
         base_betas: Dict[Tuple[int, int], float] = {}
 
         for u_rx, v_rx, payload in graph.weighted_edge_list():
+            if subgraph_nodes is not None and (u_rx not in subgraph_nodes or v_rx not in subgraph_nodes):
+                continue
             if isinstance(payload, EdgePayload):
                 base_alphas[(u_rx, v_rx)] = payload.alpha_prior
                 base_betas[(u_rx, v_rx)] = payload.beta_prior

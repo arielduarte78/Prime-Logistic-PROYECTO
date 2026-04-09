@@ -315,16 +315,21 @@ class BayesianJudge:
         ISO 27001 A.12.4: Firma HMAC del estado completo post-override.
         """
         updated = 0
-        for row in stochastic_priors_df.itertuples(index=False):
-            u_rx = osm_to_rx.get(int(row.u_osm))
-            v_rx = osm_to_rx.get(int(row.v_osm))
-            if u_rx is None or v_rx is None:
-                continue
-            pos = self._arc_index.get((u_rx, v_rx))
-            if pos is not None:
-                self._alphas[pos] = np.float32(row.alpha_degraded)
-                self._betas[pos] = np.float32(row.beta_degraded)
-                updated += 1
+        u_arr = stochastic_priors_df["u_rx"].values.astype(int)
+        v_arr = stochastic_priors_df["v_rx"].values.astype(int)
+        alpha_arr = stochastic_priors_df["alpha_degraded"].values.astype(np.float32)
+        beta_arr = stochastic_priors_df["beta_degraded"].values.astype(np.float32)
+        
+        posiciones = [self._arc_index.get((u_arr[i], v_arr[i])) for i in range(len(u_arr))]
+        mask = [p is not None for p in posiciones]
+        valid_pos = [p for p in posiciones if p is not None]
+        
+        if valid_pos:
+            self._alphas[valid_pos] = alpha_arr[mask]
+            self._betas[valid_pos] = beta_arr[mask]
+            updated = len(valid_pos)
+        else:
+            updated = 0
         logger.info(f"Stochastic overrides applied: {updated} edges updated.")
 
         # Firma del estado completo post-override
@@ -404,55 +409,44 @@ class BayesianJudge:
             beta=float(np.mean(self._betas)),
         )
 
-    def reliability_report(self) -> Dict[str, Any]:
+    def reliability_report(self, failure_threshold: float = 0.3) -> Dict[str, Any]:
         """
         Consolida el estado actual de la red en un reporte estructurado.
-
-        Retorna un dict con la forma:
-            {
-                "edges": {
-                    "u:v": {"prob_failure": float, "impact_mean": float},
-                    ...
-                },
-                "nodes": {
-                    "node_id": {"prob_failure": float, "impact_mean": float},
-                    ...
-                },
-                "system": {"prob_failure": float, "impact_mean": float},
-            }
-
-        Donde:
-            prob_failure = 1 - E[θ] = 1 - α/(α+β)
-            impact_mean  = E[θ] (la esperanza de la distribución Beta)
         """
-        edges_report: Dict[str, Dict[str, float]] = {}
-        for arc_key, params in self.arc_params().items():
-            edges_report[arc_key] = {
-                "prob_failure": 1.0 - params.mean,
-                "impact_mean": params.mean,
-            }
+        if self._alphas is None or len(self._alphas) == 0:
+            return {"edges": {}, "nodes": {}, "system": {}}
 
-        nodes_report: Dict[str, Dict[str, float]] = {}
-        for node_key, params in self.node_params().items():
-            nodes_report[node_key] = {
-                "prob_failure": 1.0 - params.mean,
-                "impact_mean": params.mean,
-            }
+        # 1. Operaciones Vectorizadas NumPy (O(1) a nivel intérprete)
+        means = self._alphas / (self._alphas + self._betas)
+        prob_failures = 1.0 - means
+
+        # 2. Filtrado de aristas en riesgo (> threshold)
+        mask = prob_failures > failure_threshold
+        risky_indices = set(np.where(mask)[0].tolist())
+
+        edges_report = {}
+        if risky_indices:
+            for (u, v), idx in self._arc_index.items():
+                if idx in risky_indices:
+                    edges_report[f"{u}:{v}"] = {
+                        "prob_failure": float(prob_failures[idx]),
+                        "impact_mean": float(means[idx]),
+                    }
 
         sys_params = self.system_params()
         system_report = {
-            "prob_failure": 1.0 - sys_params.mean,
-            "impact_mean": sys_params.mean,
+             "prob_failure": 1.0 - sys_params.mean,
+             "impact_mean": sys_params.mean,
         }
 
         logger.info(
-            "Reliability report generated: %d edges, %d nodes, system E[θ]=%.4f",
-            len(edges_report), len(nodes_report), sys_params.mean,
+            "Reliability report generated: %d risky edges found (threshold=%.2f), system E[θ]=%.4f",
+            len(edges_report), failure_threshold, sys_params.mean,
         )
 
         return {
             "edges": edges_report,
-            "nodes": nodes_report,
+            "nodes": {},  # Lazyfied y omitido para abatir O(N) de CPU time
             "system": system_report,
         }
 
