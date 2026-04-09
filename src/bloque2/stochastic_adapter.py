@@ -151,8 +151,21 @@ class StochasticBayesAdapter:
         if not np.any(mask_affected):
             return pd.DataFrame(columns=["u_osm", "v_osm", "alpha_degraded", "beta_degraded"])
             
-        avg_failures = self._failures[mask_affected] / self._n_scenarios_ingested
-        beta_degraded = self._betas_arr[mask_affected] + avg_failures
+        raw_avg_failures = self._failures[mask_affected] / self._n_scenarios_ingested
+        
+        beta_priors = self._betas_arr[mask_affected]
+
+        # ─── CALIBRACIÓN DE ESCALA DINÁMICA (Clipping Logarítmico) ───
+        # Aplicamos suavizado logarítmico para frenar el crecimiento explosivo
+        damped_failures = np.log1p(raw_avg_failures) * (self._config.gamma / 2.0)
+        
+        # Aseguramos que el estrés sintético no supere el Factor X (ej. 4.0x) del prior histórico de H3
+        factor_x = 4.0
+        max_allowed_stress = np.maximum(beta_priors * factor_x, 3.0) # Margen de maniobra mínimo de 3.0
+        
+        dynamic_stress = np.minimum(damped_failures, max_allowed_stress)
+        
+        beta_degraded = beta_priors + dynamic_stress
         
         # Clamp SIMD
         beta_degraded = np.clip(beta_degraded, 0.0, self._config.clamp_beta_max)

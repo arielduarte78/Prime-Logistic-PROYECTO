@@ -704,7 +704,16 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
             
             generator = MonteCarloGenerator(base_net, manifest, seed=42)
             engine = MonteCarloEngine(generator)
-            scenarios = engine.run(max_iter=500, window=50, e_limit=0.001)
+            
+            # ─── CALIBRACIÓN DE ESCALA DINÁMICA DE CONVERGENCIA ───
+            # Al operar sobre un subgrafo pequeño (< 100k nodos), la varianza natural 
+            # es menor y el motor inyecta estrés extremadamente rápido. Acortamos la 
+            # ventana de convergencia y relajamos el límite de error para provocar
+            # un Early Stop mucho más agresivo antes de licuar el gradiente.
+            if len(p2_subgraph_nodes) < 100000:
+                scenarios = engine.run(max_iter=500, window=20, e_limit=0.05)
+            else:
+                scenarios = engine.run(max_iter=500, window=50, e_limit=0.001)
             
             num_mc_scenarios = len(scenarios)
             convergence_reached = num_mc_scenarios < 500
