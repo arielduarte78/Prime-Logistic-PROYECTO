@@ -15,6 +15,11 @@ export default function Landing() {
     }
   };
 
+  const handleGuestAccess = () => {
+    localStorage.setItem('isGuest', 'true');
+    navigate('/app');
+  };
+
   return (
     <div id="landing-page" className="min-h-screen bg-white flex flex-col">
       {/* ─── NAV ─── */}
@@ -39,12 +44,18 @@ export default function Landing() {
           Abbey evalúa simultáneamente seguridad vial, costos operativos y ventanas horarias.
           Subí tu Excel, elegí tu estrategia, recibí el plan en segundos.
         </p>
-        <div className="flex items-center gap-6 mt-10">
-          <button id="cta-comenzar" onClick={handleComenzar}
-            className="group px-8 py-4 bg-[#1F9D6A] hover:bg-[#178a5c] rounded-xl text-white font-semibold text-lg transition-all duration-300 shadow-lg shadow-green-500/20 hover:shadow-green-500/30 hover:scale-[1.02]">
-            Comenzar<span className="inline-block ml-2 transition-transform group-hover:translate-x-1">→</span>
+        <div className="flex flex-col items-center gap-4 mt-10">
+          <div className="flex items-center gap-6">
+            <button id="cta-comenzar" onClick={handleComenzar}
+              className="group px-8 py-4 bg-[#1F9D6A] hover:bg-[#178a5c] rounded-xl text-white font-semibold text-lg transition-all duration-300 shadow-lg shadow-green-500/20 hover:shadow-green-500/30 hover:scale-[1.02]">
+              Comenzar<span className="inline-block ml-2 transition-transform group-hover:translate-x-1">→</span>
+            </button>
+            <ExcelTemplateButton className="text-gray-500 hover:text-[#1F9D6A]" />
+          </div>
+          <button id="cta-guest" onClick={handleGuestAccess}
+            className="text-sm text-gray-400 hover:text-[#1F9D6A] transition-colors underline underline-offset-4 decoration-dotted">
+            Probar sin cuenta →
           </button>
-          <ExcelTemplateButton className="text-gray-500 hover:text-[#1F9D6A]" />
         </div>
       </section>
 
@@ -87,10 +98,16 @@ export default function Landing() {
       <section className="bg-[#0F172A] py-24 px-6 text-center">
         <h2 className="text-4xl font-bold text-white mb-4">Empezá a optimizar hoy</h2>
         <p className="text-gray-400 text-lg mb-10">Sin instalación. Sin configuración. Solo subiendo tus datos.</p>
-        <button onClick={handleComenzar}
-          className="px-8 py-4 bg-white text-[#0F172A] font-bold rounded-xl text-lg hover:bg-gray-100 transition-colors">
-          Abrir Abbey →
-        </button>
+        <div className="flex flex-col items-center gap-4">
+          <button onClick={handleComenzar}
+            className="px-8 py-4 bg-white text-[#0F172A] font-bold rounded-xl text-lg hover:bg-gray-100 transition-colors">
+            Abrir Abbey →
+          </button>
+          <button onClick={handleGuestAccess}
+            className="text-sm text-gray-400 hover:text-white transition-colors underline underline-offset-4 decoration-dotted">
+            Probar como invitado
+          </button>
+        </div>
       </section>
 
       {/* ─── FOOTER ─── */}

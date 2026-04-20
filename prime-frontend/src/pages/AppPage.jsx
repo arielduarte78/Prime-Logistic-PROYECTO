@@ -11,7 +11,7 @@ import { sendFleetRequest } from '../services/fleetApi';
 import { supabase } from '../services/supabaseClient';
 
 export default function AppPage() {
-    const { user, signOut } = useAuth();
+    const { user, isGuest, signOut } = useAuth();
     const [appState, setAppState] = useState('idle');
     const [fleetResponse, setFleetResponse] = useState(null);
     const [selectedArchetype, setSelectedArchetype] = useState(null);
@@ -42,8 +42,8 @@ export default function AppPage() {
             setFleetResponse(response);
             setAppState('result');
 
-            // M4: Guardar en Historial (Supabase)
-            if (user) {
+            // M4: Guardar en Historial (Supabase) — Solo para usuarios autenticados
+            if (user && !isGuest) {
                 const firstPlan = Object.values(response.plans || {})[0] || {};
                 const summary = firstPlan.plan_financial_summary || {};
 
@@ -73,13 +73,35 @@ export default function AppPage() {
 
     return (
         <div id="app-page" className="min-h-screen bg-slate-50">
+            {/* ─── Guest Banner ─── */}
+            {isGuest && (
+                <div className="w-full bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-amber-950 px-4 py-2.5 text-center text-sm font-semibold shadow-sm flex items-center justify-center gap-2">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                    </svg>
+                    <span>Modo Invitado — Los datos no se guardarán al cerrar sesión.</span>
+                    <button
+                        onClick={() => window.location.href = '/login'}
+                        className="ml-3 px-3 py-0.5 bg-amber-950/10 hover:bg-amber-950/20 rounded-md text-xs font-bold transition-colors"
+                    >
+                        Crear cuenta
+                    </button>
+                </div>
+            )}
+
             {appState !== 'map' && (
                 <header className="w-full px-6 py-4 border-b border-slate-200 bg-white flex items-center justify-between shadow-sm">
                     <a href="/" className="text-xl font-black text-slate-900 tracking-tighter hover:text-emerald-600 transition-colors">
                         Abbey <span className="text-emerald-500">1.5</span>
                     </a>
                     <div className="flex items-center gap-4">
-                        <span className="text-xs font-bold text-slate-400 hidden sm:block">{user?.email}</span>
+                        {isGuest ? (
+                            <span className="text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1 rounded-full border border-amber-200">
+                                👤 Invitado
+                            </span>
+                        ) : (
+                            <span className="text-xs font-bold text-slate-400 hidden sm:block">{user?.email}</span>
+                        )}
                         <button onClick={signOut}
                             className="text-xs font-bold text-slate-500 hover:text-slate-900 transition-colors px-4 py-2 rounded-xl border border-slate-200 hover:bg-slate-50">
                             Salir

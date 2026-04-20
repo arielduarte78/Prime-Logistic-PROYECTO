@@ -3,6 +3,12 @@ import { useState } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { useNavigate } from 'react-router-dom';
 
+const GUEST_ICON = (
+  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+  </svg>
+);
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
@@ -147,6 +153,22 @@ export default function LoginPage() {
             {isSignUp ? 'Iniciá sesión' : 'Registrate'}
           </button>
         </p>
+
+        {/* ─── Acceso Invitado ─── */}
+        <div className="mt-8 pt-6 border-t border-gray-100">
+          <button
+            id="btn-guest-access"
+            onClick={() => {
+              localStorage.setItem('isGuest', 'true');
+              navigate('/app');
+            }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed border-gray-200 hover:border-[#1F9D6A] bg-gray-50 hover:bg-emerald-50 transition-all text-gray-500 hover:text-[#1F9D6A] font-medium text-sm group"
+          >
+            <span className="transition-transform group-hover:scale-110">{GUEST_ICON}</span>
+            Probar como Invitado
+            <span className="text-[10px] font-normal text-gray-400 group-hover:text-emerald-500">(sin guardar datos)</span>
+          </button>
+        </div>
 
         <p className="text-center text-xs text-gray-300 mt-10">© 2026 Aphira</p>
       </div>

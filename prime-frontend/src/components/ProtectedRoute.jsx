@@ -8,12 +8,21 @@ export default function ProtectedRoute({ children }) {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
+    // Guest bypass: if localStorage flag is set, skip all auth checks
+    const isGuest = localStorage.getItem('isGuest') === 'true';
+    if (isGuest) {
+      setChecking(false);
+      return; // No cleanup needed — we never subscribed
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) navigate('/login', { replace: true });
       setChecking(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Double-check guest flag in case it was set after mount
+      if (localStorage.getItem('isGuest') === 'true') return;
       if (event === 'SIGNED_OUT') navigate('/login', { replace: true });
     });
 
