@@ -7,10 +7,26 @@ export default function Landing() {
   const navigate = useNavigate();
 
   const handleComenzar = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      navigate('/app');
-    } else {
+    try {
+      console.log("Iniciando verificación de sesión...");
+      const { data: { session }, error } = await supabase.auth.getSession();
+
+      if (error) {
+        console.error("Supabase arrojó un error explícito:", error.message);
+        navigate('/login');
+        return;
+      }
+
+      console.log("Sesión detectada:", session ? "ACTIVA" : "NULA");
+
+      if (session) {
+        navigate('/app');
+      } else {
+        navigate('/login');
+      }
+    } catch (err) {
+      console.error("Fallo crítico en el hilo de asincronía:", err);
+      // Fallback: Si el servidor de autenticación muere, forzamos la ida al login.
       navigate('/login');
     }
   };
