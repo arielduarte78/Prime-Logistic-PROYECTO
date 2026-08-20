@@ -4,6 +4,9 @@ import hashlib
 import logging
 import struct
 import atexit
+import os
+import sys
+import uuid
 from multiprocessing import shared_memory
 from collections import namedtuple
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -19,18 +22,38 @@ logger = logging.getLogger(__name__)
 
 FastBeta = namedtuple('FastBeta', ['alpha', 'beta'])
 
+MIN_PRIOR_VALUE = 1.0
+MAX_PRIOR_VALUE = 1e6
+
 class SharedBayesianState:
     """
     Gestiona el bloque de memoria compartida para los arreglos base _alphas y _betas.
     Creado una única vez por el proceso maestro.
     """
     def __init__(self, num_edges: int):
+        SharedBayesianState.purge_orphans()
         self.num_edges = num_edges
         self.nbytes = num_edges * np.dtype(np.float64).itemsize
         
+        pid = os.getpid()
+        uid = uuid.uuid4().hex[:8]
+        self.shm_alphas_name = f"stochopti_shm_{pid}_{uid}_alphas"
+        self.shm_betas_name = f"stochopti_shm_{pid}_{uid}_betas"
+        self._lock_path = f"/dev/shm/stochopti_shm_{pid}_{uid}.lock" if sys.platform != 'win32' else None
+        
+        # Crear el archivo de bloqueo y adquirir flock exclusivo para el ciclo de vida del proceso
+        self._lock_fd: Optional[int] = None
+        if self._lock_path:
+            self._lock_fd = os.open(self._lock_path, os.O_CREAT | os.O_RDWR)
+            try:
+                import fcntl
+                fcntl.flock(self._lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (ImportError, OSError):
+                pass
+        
         # Bloques de memoria compartida
-        self.shm_alphas = shared_memory.SharedMemory(create=True, size=self.nbytes)
-        self.shm_betas = shared_memory.SharedMemory(create=True, size=self.nbytes)
+        self.shm_alphas = shared_memory.SharedMemory(name=self.shm_alphas_name, create=True, size=self.nbytes)
+        self.shm_betas = shared_memory.SharedMemory(name=self.shm_betas_name, create=True, size=self.nbytes)
         
         # Vistas NumPy vinculadas al buffer compartido
         self.alphas_base = np.ndarray((num_edges,), dtype=np.float64, buffer=self.shm_alphas.buf)
@@ -39,9 +62,59 @@ class SharedBayesianState:
         # Inicialización de priors uniformes Beta(2, 2)
         self.alphas_base.fill(2.0)
         self.betas_base.fill(2.0)
+        np.clip(self.alphas_base, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self.alphas_base)
+        np.clip(self.betas_base, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self.betas_base)
         
         self._closed = False
         atexit.register(self.close_and_unlink)
+
+    @staticmethod
+    def purge_orphans() -> None:
+        """
+        Recolector de basura basado en bloqueo de archivos (File Lock GC).
+
+        En lugar de verificar PIDs (susceptible a TOCTOU por reciclaje del kernel),
+        intentamos adquirir un bloqueo exclusivo no bloqueante sobre cada archivo
+        '.lock' de stochopti activo en el sistema de archivos temporal.
+        Si la adquisición tiene éxito, el kernel garantiza atómicamente que el
+        proceso propietario está muerto, eliminando la condición de carrera.
+        """
+        shm_dir = '/dev/shm' if sys.platform != 'win32' else None
+        if shm_dir is None:
+            return
+        try:
+            entries = os.listdir(shm_dir)
+        except FileNotFoundError:
+            return
+
+        for filename in entries:
+            if not filename.startswith('stochopti_shm_') or not filename.endswith('.lock'):
+                continue
+            lock_path = os.path.join(shm_dir, filename)
+            try:
+                fd = os.open(lock_path, os.O_RDWR)
+                try:
+                    import fcntl
+                    # LOCK_EX | LOCK_NB: si el proceso dueño sigue vivo, falla inmediatamente
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    # Adquisición exitosa -> proceso original está muerto (garantizado por kernel)
+                    shm_stem = filename[:-5]  # strip .lock
+                    for suffix in ('_alphas', '_betas'):
+                        shm_path = os.path.join(shm_dir, shm_stem + suffix)
+                        try:
+                            os.unlink(shm_path)
+                            logger.info("Purged orphaned shm block: %s", shm_stem + suffix)
+                        except FileNotFoundError:
+                            pass
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.unlink(lock_path)
+                except (ImportError, BlockingIOError, OSError):
+                    # LOCK_EX falló: proceso vivo, o plataforma sin fcntl -> skip seguro
+                    pass
+                finally:
+                    os.close(fd)
+            except OSError:
+                pass
 
     def __enter__(self):
         return self
@@ -61,6 +134,17 @@ class SharedBayesianState:
                 self.shm_betas.unlink()
             except FileNotFoundError:
                 pass
+            # Liberar el file lock (el kernel libera el flock al cerrar el FD)
+            if self._lock_fd is not None:
+                try:
+                    os.close(self._lock_fd)
+                except OSError:
+                    pass
+            if self._lock_path:
+                try:
+                    os.unlink(self._lock_path)
+                except FileNotFoundError:
+                    pass
             self._closed = True
 
 
@@ -92,10 +176,10 @@ class EphemeralWorkerBayesianEngine:
         self._sparse_deltas[edge_idx] = (current_s + successes, current_f + failures)
 
     def get_effective_parameters(self, edge_idx: int) -> Tuple[float, float]:
-        """Consulta en O(1): base compartida + delta local."""
+        """Consulta en O(1): base compartida + delta local, con clipping de geometría Beta."""
         delta_s, delta_f = self._sparse_deltas.get(edge_idx, (0.0, 0.0))
-        alpha = self._alphas_base[edge_idx] + delta_s
-        beta = self._betas_base[edge_idx] + delta_f
+        alpha = float(np.clip(self._alphas_base[edge_idx] + delta_s, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE))
+        beta = float(np.clip(self._betas_base[edge_idx] + delta_f, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE))
         return alpha, beta
 
     def sample_edge_risk_vector(self, perturbed_edge_indices: Sequence[int]) -> np.ndarray:
@@ -191,13 +275,17 @@ class BayesianRiskEngine:
                 beta = beta * (1.0 + mu * 0.5)
                 
             self._arc_index[(edge.source, edge.target)] = idx
-            self._alphas[idx] = max(alpha, 1.0)
-            self._betas[idx] = max(beta, 1.0)
+            self._alphas[idx] = alpha
+            self._betas[idx] = beta
             
             self._node_edges.setdefault(edge.source, []).append((edge.source, edge.target))
             self._node_edges.setdefault(edge.target, []).append((edge.source, edge.target))
             
             idx += 1
+
+        # Limitar estrictamente los valores in-place
+        np.clip(self._alphas, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._alphas)
+        np.clip(self._betas, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._betas)
 
         if self._integrity is not None:
             state_digest = hashlib.sha256(
@@ -216,13 +304,21 @@ class BayesianRiskEngine:
         if idx is not None and self._alphas is not None and self._betas is not None:
             self._alphas[idx] += np.float32(successes)
             self._betas[idx] += np.float32(failures)
+            
+            np.clip(self._alphas[idx:idx+1], MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._alphas[idx:idx+1])
+            np.clip(self._betas[idx:idx+1], MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._betas[idx:idx+1])
 
             if self._integrity is not None:
-                # Se utiliza codificación estable y trunca a 8 bytes
-                u_bytes = str(u).encode('utf-8')[:8].ljust(8, b'\0')
-                v_bytes = str(v).encode('utf-8')[:8].ljust(8, b'\0')
+                # Codificación completa sin truncado para evitar colisiones HMAC deterministas.
+                # El truncado a 8 bytes introducía colisiones para prefijos de nodo comunes
+                # (ej. nomenclatura SMILES, IUPAC, etc.).
+                u_bytes = str(u).encode('utf-8')
+                v_bytes = str(v).encode('utf-8')
+                # Separador de longitud fija (4 bytes) para prevenir ataques de extensión de longitud
+                sep = struct.pack(">I", len(u_bytes))
                 digest = hashlib.sha256(
-                    u_bytes + v_bytes + struct.pack(">ff", float(self._alphas[idx]), float(self._betas[idx]))
+                    sep + u_bytes + v_bytes
+                    + struct.pack(">ff", float(self._alphas[idx]), float(self._betas[idx]))
                 ).digest()
                 self._integrity.append("UPDATE_EDGE", digest)
 
@@ -251,6 +347,11 @@ class BayesianRiskEngine:
                     self._betas += np.float32(failures)
                     total_updates += len(self._arc_index)
 
+        if total_updates > 0:
+            # Asegurar geometría Beta global
+            np.clip(self._alphas, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._alphas)
+            np.clip(self._betas, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._betas)
+
         if self._integrity is not None and total_updates > 0:
             state_digest = hashlib.sha256(
                 self._alphas.tobytes() + self._betas.tobytes()
@@ -270,6 +371,11 @@ class BayesianRiskEngine:
                 self._betas[idx] = beta
                 updated += 1
                 
+        if updated > 0:
+            # Re-clip por seguridad estricta
+            np.clip(self._alphas, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._alphas)
+            np.clip(self._betas, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._betas)
+
         if self._integrity is not None and updated > 0:
             state_digest = hashlib.sha256(
                 self._alphas.tobytes() + self._betas.tobytes()
@@ -352,6 +458,8 @@ class BayesianRiskEngine:
         if self._alphas is None or self._betas is None: return
         self._alphas[:] = np.float32(1.0)
         self._betas[:] = np.float32(1.0)
+        np.clip(self._alphas, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._alphas)
+        np.clip(self._betas, MIN_PRIOR_VALUE, MAX_PRIOR_VALUE, out=self._betas)
 
         if self._integrity is not None:
             state_digest = hashlib.sha256(
