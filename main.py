@@ -7,6 +7,7 @@ import asyncio
 import logging
 import json
 import hashlib
+import hmac
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -586,20 +587,10 @@ def _load_client_registry() -> dict:
     registry_str = os.environ.get("ABBEY_CLIENT_REGISTRY", "")
     if not registry_str:
         logger.warning(
-            "ABBEY_CLIENT_REGISTRY not set. Using DEV defaults."
+            "ABBEY_CLIENT_REGISTRY not set. /auth/token rechaza todo "
+            "(la clave x-api-key sigue funcionando)."
         )
-        return {
-            "dev_operator": {
-                "secret": "ZGV2X3NlY3JldF8xMjM=",  # base64("dev_secret_123")
-                "name": "Dev Operator",
-                "role": "operator",
-            },
-            "dev_admin": {
-                "secret": "YWRtaW5fc2VjcmV0XzEyMw==",  # base64("admin_secret_123")
-                "name": "Dev Admin",
-                "role": "admin",
-            },
-        }
+        return {}
     registry = {}
     for entry in registry_str.split(","):
         parts = entry.strip().split(":")
@@ -622,10 +613,11 @@ async def auth_token(req: TokenRequest):
     No authentication required — uses client credentials (client_id + client_secret).
     """
     client = _client_registry.get(req.client_id)
-    if not client:
-        raise HTTPException(status_code=401, detail="Unknown client_id")
-    
-    if req.client_secret != client["secret"]:
+    # Siempre se compara (aunque el cliente no exista) y con el mismo mensaje de error:
+    # asi no se puede adivinar que client_id existen ni medir tiempos de respuesta.
+    secreto_esperado = client["secret"] if client else ""
+    secreto_ok = hmac.compare_digest(req.client_secret.encode("utf-8"), secreto_esperado.encode("utf-8"))
+    if not client or not secreto_ok:
         logger.warning("AUTH FAILED: invalid secret for client=%s", req.client_id)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
