@@ -564,6 +564,29 @@ async def calculate_route(
             pass
         semaphore.release()
 
+def _leer_commit(raiz: Path = Path(__file__).resolve().parent) -> str:
+    """Hash del commit que está corriendo: variable GIT_COMMIT, o se lee de la carpeta .git (sin usar el comando git)."""
+    desde_entorno = os.environ.get("GIT_COMMIT")
+    if desde_entorno:
+        return desde_entorno.strip()
+    try:
+        git = raiz / ".git"
+        head = (git / "HEAD").read_text().strip()
+        if not head.startswith("ref: "):
+            return head  # HEAD desacoplado: ya es el hash
+        ref = head[5:]
+        archivo_ref = git / ref
+        if archivo_ref.exists():
+            return archivo_ref.read_text().strip()
+        for linea in (git / "packed-refs").read_text().splitlines():
+            if linea.endswith(" " + ref):
+                return linea.split()[0]
+    except OSError:
+        pass
+    return "desconocido"
+
+COMMIT = _leer_commit()
+
 @app.get("/health")
 @app.get("/health/")
 async def health():
@@ -573,6 +596,7 @@ async def health():
         "status": "ok" if graph_ok else "loading",
         "graph_nodes": len(app.state.rx_to_osm) if graph_ok else 0,
         "version": "Abbey 1.5",
+        "commit": COMMIT,
         "ckm_ars": round(costo_por_km(perfil), 2),
         "ch_ars": round(costo_por_hora(perfil), 2),
     }
