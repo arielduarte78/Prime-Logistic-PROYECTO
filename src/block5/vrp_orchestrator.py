@@ -359,6 +359,7 @@ def _compute_archetype_plan(
     legs_count = 0
     leg_real_distances = {}
     leg_coords = {}
+    leg_paths = {}  # nodos reales (indices rustworkx) de la ruta elegida en cada tramo
 
     for v_plan in plan:
         r_indices = v_plan["route_indices"]
@@ -377,6 +378,7 @@ def _compute_archetype_plan(
                 if archetype in cached["arch_data"]:
                     leg_real_distances[leg_key] = cached["arch_data"][archetype]["dist"]
                     leg_coords[leg_key] = cached["arch_data"][archetype]["coords"]
+                    leg_paths[leg_key] = cached["arch_data"][archetype]["path"]
                 
                 legs_evaluations.append({
                     "source_osm": rx_to_osm[source_idx],
@@ -447,11 +449,13 @@ def _compute_archetype_plan(
                                 coords.append([node_payload.lat, node_payload.lon])
                         
                         dist = _coord_distance_km(coords) if coords else 0.0
-                        arch_data[arch_name] = {"dist": dist, "coords": coords}
+                        path_rx = [int(n) for n in sol.path]
+                        arch_data[arch_name] = {"dist": dist, "coords": coords, "path": path_rx}
 
                         if arch_name == archetype:
                             leg_real_distances[leg_key] = dist
                             leg_coords[leg_key] = coords
+                            leg_paths[leg_key] = path_rx
 
                         leg_sols.append(ParetoResult(
                             archetype=arch_name,
@@ -490,14 +494,18 @@ def _compute_archetype_plan(
 
     avg_confidence = round(total_confidence / arch_legs, 1) if arch_legs > 0 else 0.0
 
+    rx_paths = []  # por cada vehiculo del plan: nodos reales de toda su ruta, en orden
     for a_plan in plan:
         r_indices = a_plan["route_indices"]
         real_dist_total = 0.0
         full_route_coords = []
+        full_rx_path = []
         for step in range(len(r_indices) - 1):
             source_idx = r_indices[step]
             target_idx = r_indices[step + 1]
             real_dist_total += leg_real_distances.get((source_idx, target_idx), 0.0)
+            leg_p = leg_paths.get((source_idx, target_idx), [])
+            full_rx_path.extend(leg_p if not full_rx_path else leg_p[1:])
             leg_c = leg_coords.get((source_idx, target_idx), [])
             if leg_c:
                 if not full_route_coords:
@@ -506,13 +514,14 @@ def _compute_archetype_plan(
                     full_route_coords.extend(leg_c[1:])
         
         a_plan["route_coordinates"] = full_route_coords
+        rx_paths.append(full_rx_path)
 
-    for a_plan in plan:
-        path_nodes = a_plan["route_indices"]
+    for a_plan, path_nodes in zip(plan, rx_paths):
         real_dist_total = 0.0
-        for step in range(len(path_nodes) - 1):
-            source_idx = path_nodes[step]
-            target_idx = path_nodes[step + 1]
+        r_indices = a_plan["route_indices"]
+        for step in range(len(r_indices) - 1):
+            source_idx = r_indices[step]
+            target_idx = r_indices[step + 1]
             real_dist_total += leg_real_distances.get((source_idx, target_idx), 0.0)
 
         # Usar el horario de salida del camión para la hoja de ruta
@@ -581,7 +590,7 @@ def _compute_archetype_plan(
             "costo_total_usd": round(agg_total / dolar_mep, 2)
         },
         "topology_visuals": {
-            "toll_markers": _detect_toll_crossings(nodes_of_interest, plan, base_graph, client_cost_env, departure_time),
+            "toll_markers": [m for path in rx_paths for m in _detect_toll_crossings(path, None, base_graph, client_cost_env, departure_time)],
             "risk_polygons": _get_h3_polygons(p2_subgraph_nodes, threat_matrix)
         }
     }
