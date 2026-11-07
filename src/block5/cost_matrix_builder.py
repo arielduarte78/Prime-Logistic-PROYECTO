@@ -11,7 +11,8 @@ UNREACHABLE_PENALTY = 10 ** 13
 MAX_TIME_MINUTES = 1440
 
 # Cache LRU acotado para tiempos — independiente del arquetipo
-# Clave: (id(payload), departure_hour) — el tiempo no depende del arquetipo
+# Clave: (id(payload), departure_hour, velocidad) — el tiempo no depende del arquetipo,
+# pero si de la velocidad comercial del perfil economico
 _MAX_TIME_CACHE_SIZE = 500_000
 _time_weight_cache: OrderedDict = OrderedDict()
 
@@ -33,6 +34,8 @@ def _get_time_weight_fn(cost_env: Any, departure_hour: int, speed_profiles: dict
     No depende del arquetipo — hit rate máximo entre todos los archetypes
     del mismo request dado que departure_hour es igual para todos.
     """
+    velocidad_key = cost_env.velocidad_comercial_kmh
+
     def time_weight(edge: Any) -> float:
         payload = edge if isinstance(edge, EdgePayload) else edge[2]
 
@@ -41,7 +44,7 @@ def _get_time_weight_fn(cost_env: Any, departure_hour: int, speed_profiles: dict
             if v_rx not in node_filter:
                 return math.inf
 
-        cache_key = (id(payload), departure_hour)
+        cache_key = (id(payload), departure_hour, velocidad_key)
 
         cached = _time_weight_cache.get(cache_key)
         if cached is not None:

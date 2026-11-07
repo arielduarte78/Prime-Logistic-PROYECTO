@@ -9,9 +9,9 @@ from src.block5.speed_profile_loader import get_h3_parent, get_velocity_multipli
 from src.bloque4.cost_calculator import compute_edge_cost
 
 # Cache a nivel de módulo: sobrevive entre requests
-# Clave: (id(payload), departure_hour, archetype)
-# Los objetos cost_env/judge/threat_matrix/speed_profiles son singletons
-# inmutables en app.state — no necesitan entrar en la clave
+# Clave: (id(payload), departure_hour, archetype, huella del perfil economico)
+# El perfil economico cambia en cada request (lo manda el cliente), asi que entra en la clave.
+# threat_matrix/speed_profiles si son singletons inmutables en app.state.
 _MAX_CACHE_SIZE = 500_000
 _cost_cache: OrderedDict = OrderedDict()
 
@@ -29,6 +29,11 @@ def _cache_set(key, value):
             _cost_cache.popitem(last=False)  # Evict LRU
     _cost_cache[key] = value
 
+def _huella_perfil(cost_env: Any) -> int:
+    """Identifica el contenido del perfil economico (dos perfiles iguales dan la misma huella)."""
+    a_json = getattr(cost_env, "model_dump_json", None)
+    return hash(a_json()) if a_json else id(cost_env)
+
 def get_weight_function(
     archetype: str,
     cost_env: Any,
@@ -43,6 +48,8 @@ def get_weight_function(
     if speed_profiles is None:
         speed_profiles = {}
 
+    perfil_key = _huella_perfil(cost_env)
+
     def weight_func(edge: Any) -> float:
         payload = edge if isinstance(edge, EdgePayload) else edge[2]
 
@@ -50,7 +57,7 @@ def get_weight_function(
         if node_filter is not None and v_rx not in node_filter:
             return math.inf
 
-        cache_key = (id(payload), departure_hour, archetype)
+        cache_key = (id(payload), departure_hour, archetype, perfil_key)
         cached_tuple, hit = _cache_get(cache_key)
         if hit:
             cost_result, fb_used = cached_tuple

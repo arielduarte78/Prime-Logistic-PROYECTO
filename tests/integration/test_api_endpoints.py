@@ -104,3 +104,20 @@ def test_route_successful_path(test_client):
     data = response.json()
     assert "toll_fallback_edges" in data
     assert len(data.get("pareto_solutions", [])) > 0
+
+
+def test_route_con_economic_profile_propio(test_client):
+    """
+    /route debe aceptar un economic_profile del cliente (antes devolvía 422
+    porque mezclaba el perfil anidado con el CostSettings plano).
+    """
+    payload = {
+        "vehicles": [{"id": "truck", "origin_lat": -34.60, "origin_lon": -58.38, "capacity_tons": 10.0}],
+        "destinations": [{"id": "dest", "lat": -34.61, "lon": -58.37, "demand_tons": 5.0}],
+        "economic_profile": {
+            "dolar_mep_ars": 1500.0,
+            "opex_movil": {"gasoil_ars_l": 2000.0},
+        },
+    }
+    response = test_client.post("/route", json=payload, headers={"x-api-key": "test_key_123"})
+    assert response.status_code == 200, response.text

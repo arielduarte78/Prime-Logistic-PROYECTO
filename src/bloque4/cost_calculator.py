@@ -16,6 +16,9 @@ _REF_TOLL_MAP = {
     "RN2":  "aubasa_sur_ars",           # Ruta 2 — AUBASA
 }
 
+# Km de autopista que cubre un peaje (aprox.). Mismo orden de magnitud que ruta_tipica_km.
+KM_POR_PEAJE = 10.0
+
 def _get_toll_from_ref(ref_value: str, cost_env) -> float:
     """
     Resuelve el costo de peaje desde el campo ref de OSM.
@@ -107,23 +110,25 @@ def compute_edge_cost(
 
     used_toll_fallback = False
     if payload.highway in {"motorway", "motorway_link", "trunk", "trunk_link"}:
+        # El peaje se paga por cruce, pero cada arista mide ~350 m. Para no cobrarlo en cada
+        # arista, se reparte por largo: un peaje completo cada KM_POR_PEAJE km de autopista.
+        fraccion_peaje = dist_km / KM_POR_PEAJE
         name_upper = payload.name.upper() if getattr(payload, 'name', None) else ""
         if "25 DE MAYO" in name_upper or "PERITO MORENO" in name_upper:
-            financial_cost_ars += getattr(cost_env, 'ausa_25_mayo_ars', 1200.0)
-        elif "PASEO DEL BAJO" in name_upper or "BAJO" in name_upper:
-            financial_cost_ars += getattr(cost_env, 'ausa_paseo_bajo_ars', 1200.0)
+            peaje = getattr(cost_env, 'ausa_25_mayo_ars', 1200.0)
+        elif "PASEO DEL BAJO" in name_upper:
+            peaje = getattr(cost_env, 'ausa_paseo_bajo_ars', 1200.0)
         elif "PANAMERICANA" in name_upper or "ACCESO NORTE" in name_upper or "ACCESO OESTE" in name_upper:
-            financial_cost_ars += getattr(cost_env, 'acceso_norte_oeste_ars', 1300.0)
+            peaje = getattr(cost_env, 'acceso_norte_oeste_ars', 1300.0)
         elif "BUENOS AIRES - LA PLATA" in name_upper or "RICCHERI" in name_upper:
-            financial_cost_ars += getattr(cost_env, 'aubasa_sur_ars', 900.0)
+            peaje = getattr(cost_env, 'aubasa_sur_ars', 900.0)
         else:
             ref_value = getattr(payload, 'ref', None)
-            ref_cost = _get_toll_from_ref(ref_value, cost_env)
-            if ref_cost > 0.0:
-                financial_cost_ars += ref_cost
-            else:
-                financial_cost_ars += peaje_promedio_ars
+            peaje = _get_toll_from_ref(ref_value, cost_env)
+            if peaje <= 0.0:
+                peaje = peaje_promedio_ars
                 used_toll_fallback = True
+        financial_cost_ars += peaje * fraccion_peaje
 
     risk_cost_ars = p_failure * franquicia_ars * (dist_km / ruta_tipica_km)
     weight = float((lambda_cost * financial_cost_ars) + (lambda_risk * risk_cost_ars))
