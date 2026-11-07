@@ -7,6 +7,7 @@ import asyncio
 import logging
 import json
 import hashlib
+import hmac
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -37,7 +38,7 @@ from src.bloque4.rx_adapter import build_legacy_graph, get_rx_idx_for_osm
 from src.bloque4.multiobjective_engine import MultiObjectiveEngine
 from src.bloque4.pareto import ParetoFrontResult
 import duckdb
-from src.config.settings import load_cost_settings
+from src.config.settings import load_cost_settings, resolve_profile, costo_por_km, costo_por_hora
 from src.bloque3.threat_loader import load_h3_threat_matrix
 from src.bloque3.integrity_chain import IntegrityChain
 from src.api.security import rate_limit_route, rate_limit_fleet, verify_api_key
@@ -398,8 +399,8 @@ async def calculate_route(
         origin_osm = get_nearest_node_osm_id(v.origin_lat, v.origin_lon)
         dest_osm = get_nearest_node_osm_id(d.lat, d.lon)
 
-        # 2. Perfil economico: el del cliente, o el por defecto (igual que /fleet)
-        client_cost_env = payload.economic_profile or EconomicProfile()
+        # 2. Perfil economico: YAML + lo que mande el cliente (igual que /fleet)
+        client_cost_env = resolve_profile(payload.economic_profile)
 
         # 3. Corredor H3 y Filtro Zero-Copy
         h3_corridor = set(build_h3_corridor(
@@ -563,16 +564,41 @@ async def calculate_route(
             pass
         semaphore.release()
 
+def _leer_commit(raiz: Path = Path(__file__).resolve().parent) -> str:
+    """Hash del commit que está corriendo: variable GIT_COMMIT, o se lee de la carpeta .git (sin usar el comando git)."""
+    desde_entorno = os.environ.get("GIT_COMMIT")
+    if desde_entorno:
+        return desde_entorno.strip()
+    try:
+        git = raiz / ".git"
+        head = (git / "HEAD").read_text().strip()
+        if not head.startswith("ref: "):
+            return head  # HEAD desacoplado: ya es el hash
+        ref = head[5:]
+        archivo_ref = git / ref
+        if archivo_ref.exists():
+            return archivo_ref.read_text().strip()
+        for linea in (git / "packed-refs").read_text().splitlines():
+            if linea.endswith(" " + ref):
+                return linea.split()[0]
+    except OSError:
+        pass
+    return "desconocido"
+
+COMMIT = _leer_commit()
+
 @app.get("/health")
 @app.get("/health/")
 async def health():
     graph_ok = hasattr(app.state, "base_graph") and app.state.base_graph is not None
+    perfil = resolve_profile(None)
     return {
         "status": "ok" if graph_ok else "loading",
         "graph_nodes": len(app.state.rx_to_osm) if graph_ok else 0,
         "version": "Abbey 1.5",
-        "ckm_ars": 807.85,
-        "ch_ars": 19130.79
+        "commit": COMMIT,
+        "ckm_ars": round(costo_por_km(perfil), 2),
+        "ch_ars": round(costo_por_hora(perfil), 2),
     }
 
 # ─────────────────────────────────────────────────────────
@@ -586,20 +612,10 @@ def _load_client_registry() -> dict:
     registry_str = os.environ.get("ABBEY_CLIENT_REGISTRY", "")
     if not registry_str:
         logger.warning(
-            "ABBEY_CLIENT_REGISTRY not set. Using DEV defaults."
+            "ABBEY_CLIENT_REGISTRY not set. /auth/token rechaza todo "
+            "(la clave x-api-key sigue funcionando)."
         )
-        return {
-            "dev_operator": {
-                "secret": "ZGV2X3NlY3JldF8xMjM=",  # base64("dev_secret_123")
-                "name": "Dev Operator",
-                "role": "operator",
-            },
-            "dev_admin": {
-                "secret": "YWRtaW5fc2VjcmV0XzEyMw==",  # base64("admin_secret_123")
-                "name": "Dev Admin",
-                "role": "admin",
-            },
-        }
+        return {}
     registry = {}
     for entry in registry_str.split(","):
         parts = entry.strip().split(":")
@@ -622,10 +638,11 @@ async def auth_token(req: TokenRequest):
     No authentication required — uses client credentials (client_id + client_secret).
     """
     client = _client_registry.get(req.client_id)
-    if not client:
-        raise HTTPException(status_code=401, detail="Unknown client_id")
-    
-    if req.client_secret != client["secret"]:
+    # Siempre se compara (aunque el cliente no exista) y con el mismo mensaje de error:
+    # asi no se puede adivinar que client_id existen ni medir tiempos de respuesta.
+    secreto_esperado = client["secret"] if client else ""
+    secreto_ok = hmac.compare_digest(req.client_secret.encode("utf-8"), secreto_esperado.encode("utf-8"))
+    if not client or not secreto_ok:
         logger.warning("AUTH FAILED: invalid secret for client=%s", req.client_id)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     

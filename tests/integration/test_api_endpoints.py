@@ -121,3 +121,31 @@ def test_route_con_economic_profile_propio(test_client):
     }
     response = test_client.post("/route", json=payload, headers={"x-api-key": "test_key_123"})
     assert response.status_code == 200, response.text
+
+
+def test_fleet_toll_markers_salen_de_la_ruta_real(test_client, mock_app_state):
+    """
+    En el grafo mock la ruta nodo0 -> nodo1 -> nodo2 pasa por la arista 0->1 (autopista '25 de Mayo').
+    toll_markers y el desglose de costos tienen que ver ese peaje, una sola vez.
+    """
+    # El camión tiene que poder volver al depósito: agregamos aristas de retorno (calles, sin peaje).
+    from src.bloque1.graph_builder import EdgePayload
+    for u, v, u_osm, v_osm in [(1, 0, 2000, 1000), (2, 1, 3000, 2000)]:
+        mock_app_state.base_graph.add_edge(u, v, EdgePayload(
+            u_osm=u_osm, v_osm=v_osm, length=1500.0, highway="residential", name="Calle Vuelta",
+            ref="", h3_index="8a801234567ffff", alpha_prior=99.0, beta_prior=1.0))
+    payload = {
+        "vehicles": [{"id": "trk_01", "origin_lat": -34.60, "origin_lon": -58.38, "capacity_tons": 10.0}],
+        "destinations": [{"id": "dest_01", "lat": -34.62, "lon": -58.39, "demand_tons": 5.0}],
+        "allowed_archetypes": ["equilibrista"],
+    }
+    response = test_client.post("/fleet", json=payload, headers={"x-api-key": "test_key_123"})
+    assert response.status_code == 200, response.text
+    plan = response.json()["plans"]["equilibrista"]
+
+    marcas = plan["topology_visuals"]["toll_markers"]
+    assert [m["name"] for m in marcas] == ["Peaje AUSA 25 de Mayo"]
+
+    desglose = plan["assignments"][0]["cost_breakdown"]
+    assert len(desglose["peajes_cruzados"]) == 1
+    assert desglose["costo_peajes_ars"] > 0

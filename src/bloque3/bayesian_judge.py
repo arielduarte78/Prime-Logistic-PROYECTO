@@ -136,6 +136,14 @@ class BayesianJudge:
         
         return clone
 
+    def huella(self) -> str:
+        """Resumen corto de los parámetros (α, β) actuales: dos jueces con los mismos valores dan la misma huella."""
+        if self._alphas is None or self._betas is None:
+            return "vacio"
+        return hashlib.blake2b(
+            self._alphas.tobytes() + self._betas.tobytes(), digest_size=8
+        ).hexdigest()
+
     @property
     def integrity_compromised(self) -> bool:
         """Proxy al estado de integridad de la cadena HMAC."""

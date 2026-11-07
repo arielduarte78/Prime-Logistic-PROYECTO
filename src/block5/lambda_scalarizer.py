@@ -9,8 +9,9 @@ from src.block5.speed_profile_loader import get_h3_parent, get_velocity_multipli
 from src.bloque4.cost_calculator import compute_edge_cost
 
 # Cache a nivel de módulo: sobrevive entre requests
-# Clave: (id(payload), departure_hour, archetype, huella del perfil economico)
-# El perfil economico cambia en cada request (lo manda el cliente), asi que entra en la clave.
+# Clave: (id(payload), departure_hour, archetype, huella del perfil economico, huella del juez)
+# El perfil economico (lo manda el cliente) y el juez (en modo estocastico cada request
+# tiene un clon con otros alfa/beta) cambian entre requests, asi que entran en la clave.
 # threat_matrix/speed_profiles si son singletons inmutables en app.state.
 _MAX_CACHE_SIZE = 500_000
 _cost_cache: OrderedDict = OrderedDict()
@@ -34,6 +35,12 @@ def _huella_perfil(cost_env: Any) -> int:
     a_json = getattr(cost_env, "model_dump_json", None)
     return hash(a_json()) if a_json else id(cost_env)
 
+def _huella_juez(judge: Any) -> Any:
+    """Huella de los parametros bayesianos del juez (si no la tiene, su identidad)."""
+    huella = getattr(judge, "huella", None)
+    valor = huella() if callable(huella) else None
+    return valor if isinstance(valor, str) else id(judge)
+
 def get_weight_function(
     archetype: str,
     cost_env: Any,
@@ -48,7 +55,7 @@ def get_weight_function(
     if speed_profiles is None:
         speed_profiles = {}
 
-    perfil_key = _huella_perfil(cost_env)
+    perfil_key = (_huella_perfil(cost_env), _huella_juez(judge))
 
     def weight_func(edge: Any) -> float:
         payload = edge if isinstance(edge, EdgePayload) else edge[2]
