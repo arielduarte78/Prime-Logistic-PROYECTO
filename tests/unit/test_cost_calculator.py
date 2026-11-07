@@ -83,3 +83,44 @@ def test_residential_no_toll(test_cost_env):
     )
     
     assert fallback_used is False
+
+
+# ─── Peaje por cruce (no por arista) y match de "BAJO" ───
+
+def _toll_part(env, length_m, name="Autopista 25 de Mayo", highway="motorway"):
+    """Parte de peaje del peso de una arista = peso(autopista) - peso(misma arista sin peaje)."""
+    def peso(hw):
+        p = EdgePayload(u_osm=1, v_osm=2, length=length_m, highway=hw, name=name,
+                        ref="", h3_index="", alpha_prior=99.0, beta_prior=1.0)
+        w, _ = compute_edge_cost(payload=p, u_rx=1, v_rx=2, cost_env=env, threat_matrix={},
+                                 judge=None, departure_hour=12, speed_profiles={}, archetype="apostador")
+        return w
+    return (peso(highway) - peso("primary")) / 0.99  # apostador: lambda_cost = 0.99
+
+
+def test_peaje_se_prorratea_por_largo_no_por_arista(test_cost_env):
+    """Un tramo de 10 km de 25 de Mayo cuesta un peaje; partido en 2 aristas de 5 km, también uno (no dos)."""
+    peaje = test_cost_env.ausa_25_mayo_ars
+    una_arista = _toll_part(test_cost_env, 10_000)
+    dos_aristas = 2 * _toll_part(test_cost_env, 5_000)
+    assert una_arista == pytest.approx(peaje)
+    assert dos_aristas == pytest.approx(peaje)
+
+
+def test_bajo_suelto_no_cobra_paseo_del_bajo(test_cost_env):
+    """Una calle 'Bajo Belgrano' no es el Paseo del Bajo: no debe usar su tarifa (cae al fallback)."""
+    p = EdgePayload(u_osm=1, v_osm=2, length=1000.0, highway="motorway", name="Bajo Belgrano",
+                    ref="", h3_index="", alpha_prior=99.0, beta_prior=1.0)
+    _, fallback_used = compute_edge_cost(payload=p, u_rx=1, v_rx=2, cost_env=test_cost_env,
+                                         threat_matrix={}, judge=None, departure_hour=12,
+                                         speed_profiles={}, archetype="equilibrista")
+    assert fallback_used is True
+
+
+def test_paseo_del_bajo_sigue_funcionando(test_cost_env):
+    p = EdgePayload(u_osm=1, v_osm=2, length=1000.0, highway="motorway", name="Paseo del Bajo",
+                    ref="", h3_index="", alpha_prior=99.0, beta_prior=1.0)
+    _, fallback_used = compute_edge_cost(payload=p, u_rx=1, v_rx=2, cost_env=test_cost_env,
+                                         threat_matrix={}, judge=None, departure_hour=12,
+                                         speed_profiles={}, archetype="equilibrista")
+    assert fallback_used is False

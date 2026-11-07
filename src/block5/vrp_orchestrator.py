@@ -52,6 +52,7 @@ def _haversine_path_km(path_rx, base_graph) -> float:
 
 def _detect_toll_crossings(path_nodes, plan_ref, base_graph, cost_env, departure_time) -> list:
     markers = []
+    peaje_anterior = ""  # aristas seguidas del mismo peaje = un solo cruce
     for i in range(len(path_nodes) - 1):
         u_idx, v_idx = path_nodes[i], path_nodes[i+1]
         try:
@@ -74,7 +75,12 @@ def _detect_toll_crossings(path_nodes, plan_ref, base_graph, cost_env, departure
             elif "ACCESO OESTE" in name_upper:
                 is_toll, toll_name, cost = True, "Peaje Acceso Oeste", getattr(cost_env, "acceso_norte_oeste_ars", 1300.0)
             
-            if is_toll:
+            if not is_toll:
+                peaje_anterior = ""
+            elif toll_name == peaje_anterior:
+                continue
+            else:
+                peaje_anterior = toll_name
                 u_node = base_graph[u_idx]
                 markers.append({
                     "lat": u_node.lat,
