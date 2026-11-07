@@ -1,3 +1,7 @@
+# DEPRECADO - NO USAR ESTE SCRIPT.
+# Hace "git push --force" a Hugging Face y ademas despliega Vercel sin preguntar.
+# Para el backend usar: .\deploy_backend.ps1
+
 # Abbey Engine - Sync & Deploy Script (Windows)
 
 $PRIME_FRONTEND_DIR = "prime-frontend"
