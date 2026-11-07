@@ -26,6 +26,23 @@ Por eso:
 - `prime-frontend/src/services/fleetApi.js` tiene una API key de respaldo hardcodeada; las variables VITE_ son públicas en el navegador de todos modos.
 - `data/threat_index.json` no está en el repo (lo ignora `*.json` en .gitignore). Origen de las severidades: a documentar por el autor.
 
+## Decisiones tomadas (07/11/2026)
+- `config/cost_params.yaml` es la única fuente de parámetros económicos de `/route`, `/fleet` y `/health`. Los valores quedan como están: velocidad comercial 22 km/h, franquicia 80.000 USD. El cliente solo pisa los campos que manda explícitamente (`resolve_profile` en `src/config/settings.py`).
+- `exposure_risk_ars` NO suma a `costo_total_ars`: se devuelve aparte, con `exposure_risk_nota: "estimación en revisión"`.
+- `/auth/token`: sin `ABBEY_CLIENT_REGISTRY` rechaza todo (ya no existen `dev_operator`/`dev_admin`). La clave legacy `x-api-key` (`PRIME_API_KEYS`) que usa el frontend NO se toca.
+- Peajes: se prorratean por largo (un peaje cada `KM_POR_PEAJE = 10` km de autopista), no por arista. Es una aproximación, a validar.
+- `/health` devuelve `commit` (variable `GIT_COMMIT` o carpeta `.git`).
+- Deploy del backend: usar `deploy_backend.ps1` (sin `--force`, no toca Vercel, verifica `/health`). `deploy.ps1` está DEPRECADO, no usar. Space: https://huggingface.co/spaces/Aphira/Abbey (app: https://aphira-abbey.hf.space). Commit anterior al último deploy, para volver atrás: `a3ba522`.
+- Secrets del Space: solo `PRIME_API_KEYS`.
+
+## Pendientes
+- **Rehacer `exposure_risk_ars` en la etapa de datos reales.** Hoy es un 1% fijo de la franquicia (`0.01 * franquicia_usd * dólar`) que no usa el modelo de riesgo.
+- Frontend: `CostBreakdownPanel.jsx` suma `exposure_risk_ars` en la línea "Riesgo Patrimonial y Custodia", pero el total ya no lo incluye (las líneas no suman el total). `fleetApi.js` sigue con API key de respaldo hardcodeada.
+- Juez bayesiano y riesgo: la caché de costos usa una huella de α/β (`BayesianJudge.huella()`); el modelo de riesgo y `threat_index.json` siguen sin revisar.
+- `_get_h3_polygons` filtra `mu > 1.1` pero `mu <= 1.0`: `risk_polygons` sale siempre vacío.
+- Código muerto y duplicado: ver las tablas de `ARQUITECTURA.md` (nada se borra sin confirmación).
+- Los `.parquet` están en Git LFS: hace falta `git lfs pull` para levantar la API.
+
 ## Reglas de trabajo
 - Antes de borrar o mover archivos, listá qué vas a tocar y esperá confirmación.
 - Corré los tests (`pytest`) antes y después de cada cambio.
