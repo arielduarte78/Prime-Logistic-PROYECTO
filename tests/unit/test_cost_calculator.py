@@ -1,14 +1,13 @@
 #tests/unit/test_cost_calculator.py
 import pytest
 from src.bloque4.cost_calculator import compute_edge_cost, _get_toll_from_ref
-from src.config.settings import CostSettings
+from src.api.schemas import EconomicProfile
 from src.bloque1.graph_builder import EdgePayload
 
 @pytest.fixture
 def test_cost_env():
-    return CostSettings(
-        c_km_ars=100.0,
-        c_hora_ars=2000.0,
+    # Mismo tipo que usa la app en /route y /fleet (perfil con opex/personal/capex anidados)
+    return EconomicProfile(
         franquicia_seguro_usd=500.0,
         dolar_mep_ars=1000.0,
         velocidad_comercial_kmh=40.0,
@@ -17,7 +16,7 @@ def test_cost_env():
         ausa_25_mayo_ars=500.0,
         ausa_paseo_bajo_ars=600.0,
         acceso_norte_oeste_ars=300.0,
-        aubasa_sur_ars=400.0
+        aubasa_sur_ars=400.0,
     )
 
 def test_toll_name_resolution_no_fallback(test_cost_env):

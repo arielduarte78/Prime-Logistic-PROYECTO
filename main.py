@@ -23,7 +23,7 @@ load_dotenv()
 
 from src.api.schemas import (
     RouteRequest, RouteResponse, ParetoResult, FleetRequest, FleetResponse,
-    TokenRequest, TokenResponse, RefreshResponse,
+    TokenRequest, TokenResponse, RefreshResponse, EconomicProfile,
 )
 from src.block5.vrp_orchestrator import calculate_fleet
 from src.block5.speed_profile_loader import load_speed_profiles
@@ -398,15 +398,8 @@ async def calculate_route(
         origin_osm = get_nearest_node_osm_id(v.origin_lat, v.origin_lon)
         dest_osm = get_nearest_node_osm_id(d.lat, d.lon)
 
-        # 2. Resuelve el perfil economico dinamico
-        client_cost_env = request.app.state.cost_settings
-        if payload.economic_profile:
-            # Actualiza campos que no sean None enviando del cliente
-            override_dict = payload.economic_profile.model_dump(exclude_unset=True)
-            base_dict = client_cost_env.__dict__.copy()
-            base_dict.update(override_dict)
-            from src.config.settings import CostSettings
-            client_cost_env = CostSettings(**base_dict)
+        # 2. Perfil economico: el del cliente, o el por defecto (igual que /fleet)
+        client_cost_env = payload.economic_profile or EconomicProfile()
 
         # 3. Corredor H3 y Filtro Zero-Copy
         h3_corridor = set(build_h3_corridor(
