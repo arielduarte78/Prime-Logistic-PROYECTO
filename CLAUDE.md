@@ -32,7 +32,7 @@ Por eso:
 - `/auth/token`: sin `ABBEY_CLIENT_REGISTRY` rechaza todo (ya no existen `dev_operator`/`dev_admin`). La clave legacy `x-api-key` (`PRIME_API_KEYS`) que usa el frontend NO se toca.
 - Peajes: se prorratean por largo (un peaje cada `KM_POR_PEAJE = 10` km de autopista), no por arista. Es una aproximación, a validar.
 - `/health` devuelve `commit` (variable `GIT_COMMIT` o carpeta `.git`).
-- Deploy del backend: usar `deploy_backend.ps1` (sin `--force`, no toca Vercel, verifica `/health`). `deploy.ps1` está DEPRECADO, no usar. Space: https://huggingface.co/spaces/Aphira/Abbey (app: https://aphira-abbey.hf.space). Commit anterior al último deploy, para volver atrás: `a3ba522`.
+- Deploy del backend: `./deploy_backend.sh` (Linux/macOS, lo usa Claude) o `deploy_backend.ps1` (Windows). Sin `--force`, no tocan Vercel, verifican `/health` hasta que `commit` sea el HEAD de `main`. El token de Hugging Face va SIEMPRE por la variable de entorno `HF_TOKEN` (con `GIT_ASKPASS`): nunca en la URL del remote, en `.git/config` ni en archivos. Rollback: `ROLLBACK=1 HF_TOKEN=... ./deploy_backend.sh` (único caso con `--force`). `deploy.ps1` está DEPRECADO, no usar. Space: https://huggingface.co/spaces/Aphira/Abbey (app: https://aphira-abbey.hf.space). Commit anterior al primer deploy: `a3ba522`.
 - Secrets del Space: solo `PRIME_API_KEYS`.
 
 ## Pendientes
