@@ -180,6 +180,7 @@ class CostBreakdown(BaseModel):
     fixed_costs_ars: float = 0.0
     custodia_ars: float = 0.0
     exposure_risk_ars: float = 0.0
+    exposure_risk_nota: str = ""  # el riesgo de exposición va aparte y no suma a costo_total_ars
     executive_variance_analysis: List[str] = []
 
     costo_total_ars: float

@@ -18,6 +18,8 @@ from src.bloque4.pareto import ParetoFrontResult
 
 logger = logging.getLogger("VRP_Orchestrator")
 
+NOTA_EXPOSURE_RISK = "estimación en revisión"
+
 _archetype_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="archetype")
 
 def _coord_distance_km(coords: list) -> float:
@@ -176,7 +178,8 @@ def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_
     total_riesgo_exposicion = 0.01 * (franquicia_usd * dolar_mep) 
 
     fixed_costs_total = costo_peajes + viatico_total
-    total_viaje_ars = opex_dist_total + opex_time_total + capex_amort_total + fixed_costs_total + total_custodia + total_riesgo_exposicion
+    # exposure_risk_ars NO entra en el total: es un 1% fijo de la franquicia, estimación en revisión
+    total_viaje_ars = opex_dist_total + opex_time_total + capex_amort_total + fixed_costs_total + total_custodia
 
     reasons = []
     if wait_hr > 0.5:
@@ -210,6 +213,7 @@ def _calculate_cost_breakdown(path_nodes, schedule, base_graph, cost_env, start_
         fixed_costs_ars=round(fixed_costs_total, 2),
         custodia_ars=round(total_custodia, 2),
         exposure_risk_ars=round(total_riesgo_exposicion, 2),
+        exposure_risk_nota=NOTA_EXPOSURE_RISK,
         executive_variance_analysis=reasons,
         costo_total_ars=round(total_viaje_ars, 2),
         costo_total_usd=round(total_viaje_ars / dolar_mep, 2),
@@ -550,7 +554,7 @@ def _compute_archetype_plan(
     agg_fixed = sum(v.get("cost_breakdown", {}).get("fixed_costs_ars", 0) for v in plan)
     agg_custodia = sum(v.get("cost_breakdown", {}).get("custodia_ars", 0) for v in plan)
     agg_exposure_risk = sum(v.get("cost_breakdown", {}).get("exposure_risk_ars", 0) for v in plan)
-    agg_total = agg_opex_dist + agg_opex_time + agg_capex + agg_fixed + agg_custodia + agg_exposure_risk
+    agg_total = agg_opex_dist + agg_opex_time + agg_capex + agg_fixed + agg_custodia  # sin exposure_risk
     agg_variance = []
     for v in plan:
         agg_variance.extend(v.get("cost_breakdown", {}).get("executive_variance_analysis", []))
@@ -584,6 +588,7 @@ def _compute_archetype_plan(
             "fixed_costs_ars": round(agg_fixed, 2),
             "custodia_ars": round(agg_custodia, 2),
             "exposure_risk_ars": round(agg_exposure_risk, 2),
+            "exposure_risk_nota": NOTA_EXPOSURE_RISK,
             "executive_variance_analysis": agg_variance,
             "costo_total_ars": round(agg_total, 2),
             "distancia_km": sum(v.get("cost_breakdown", {}).get("distancia_km", 0) for v in plan),

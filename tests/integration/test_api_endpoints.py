@@ -149,3 +149,38 @@ def test_fleet_toll_markers_salen_de_la_ruta_real(test_client, mock_app_state):
     desglose = plan["assignments"][0]["cost_breakdown"]
     assert len(desglose["peajes_cruzados"]) == 1
     assert desglose["costo_peajes_ars"] > 0
+
+
+def test_fleet_exposure_risk_va_aparte_del_total(test_client, mock_app_state):
+    """
+    exposure_risk_ars (1% fijo de la franquicia, estimación en revisión) se devuelve aparte con su nota
+    y NO se suma a costo_total_ars, ni en el desglose por vehículo ni en el resumen del plan.
+    """
+    from src.bloque1.graph_builder import EdgePayload
+    for u, v, u_osm, v_osm in [(1, 0, 2000, 1000), (2, 1, 3000, 2000)]:
+        mock_app_state.base_graph.add_edge(u, v, EdgePayload(
+            u_osm=u_osm, v_osm=v_osm, length=1500.0, highway="residential", name="Calle Vuelta",
+            ref="", h3_index="8a801234567ffff", alpha_prior=99.0, beta_prior=1.0))
+    payload = {
+        "vehicles": [{"id": "trk_01", "origin_lat": -34.60, "origin_lon": -58.38, "capacity_tons": 10.0}],
+        "destinations": [{"id": "dest_01", "lat": -34.62, "lon": -58.39, "demand_tons": 5.0}],
+        "allowed_archetypes": ["equilibrista"],
+    }
+    response = test_client.post("/fleet", json=payload, headers={"x-api-key": "test_key_123"})
+    assert response.status_code == 200, response.text
+    plan = response.json()["plans"]["equilibrista"]
+
+    d = plan["assignments"][0]["cost_breakdown"]
+    sin_exposicion = (d["opex_distance_ars"] + d["opex_time_ars"] + d["capex_amortization_ars"]
+                      + d["fixed_costs_ars"] + d["custodia_ars"])
+    assert d["exposure_risk_ars"] > 0
+    assert d["exposure_risk_nota"] == "estimación en revisión"
+    assert d["costo_total_ars"] == pytest.approx(sin_exposicion, abs=0.05)
+
+    r = plan["plan_financial_summary"]
+    resumen = (r["opex_distance_ars"] + r["opex_time_ars"] + r["capex_amortization_ars"]
+               + r["fixed_costs_ars"] + r["custodia_ars"])
+    assert r["exposure_risk_ars"] > 0
+    assert r["exposure_risk_nota"] == "estimación en revisión"
+    assert r["costo_total_ars"] == pytest.approx(resumen, abs=0.05)
+    assert r["total_expected_cost"] == pytest.approx(resumen, abs=0.05)
