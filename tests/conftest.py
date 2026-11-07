@@ -12,7 +12,7 @@ os.environ["TESTING"] = "1"
 # Para saltar dependencias en security.py si fuese necesario, o para setear vars mockeadas
 os.environ["PRIME_API_KEYS"] = "test_client:test_key_123"
 
-from src.api.main import app
+from main import app
 from src.bloque4.schema import Node as SchemaNode
 from src.bloque1.graph_builder import EdgePayload
 from src.config.settings import CostSettings
@@ -85,6 +85,16 @@ def mock_app_state():
     mock_threat_matrix = {"8a801234567ffff": 0.5}
     mock_speed_profiles = {"motorway": {"AMBA_R1": 1.0}}
 
+    # 5b. Auth: el lifespan no corre en los tests, así que registramos la API key de prueba a mano
+    from src.api.identity import configure_identity
+    configure_identity(
+        jwt_secret=os.urandom(32),
+        jwt_secret_prev=None,
+        authorized_keys={"test_key_123": "test_client"},
+        access_ttl=900,
+        refresh_ttl=604800,
+    )
+
     # 6. Asignar al contexto de la app
     app.state.base_graph = base_graph
     app.state.osm_to_rx = osm_to_rx
@@ -126,6 +136,5 @@ def test_client(mock_app_state):
         if abs(lat - 0.0) < 0.005: return 999999  # Null Island — inválido intencional
         raise ValueError(f"Coordenada lat={lat} no tiene nodo mock asignado. Agregá el caso al conftest.")
 
-    with patch('src.api.main.get_nearest_node_osm_id', side_effect=my_nearest_node_osm_id), \
-         patch('src.block5.vrp_orchestrator.get_nearest_node_osm_id', side_effect=my_nearest_node_osm_id):
+    with patch("main.get_nearest_node_osm_id", side_effect=my_nearest_node_osm_id):
         yield TestClient(app)
