@@ -1,6 +1,7 @@
 #src/bloque4/cost_calculator.py
 import math
 from src.block5.speed_profile_loader import get_h3_parent, get_velocity_multiplier
+from src.config.settings import costo_por_km, costo_por_hora
 
 # Mapeo ref OSM → costo de peaje AMBA
 # Fuente: datos reales de concesionarias AUSA y AUBASA
@@ -55,24 +56,9 @@ def compute_edge_cost(
     else:
         lambda_cost, lambda_risk = 1.0, 0.0
 
-    # --- CFO Calculations (Refactor de Raíz) ---
-    opex = cost_env.opex_movil
-    personal = cost_env.personal
-    capex = cost_env.capex
-
-    # 1. Costo por KM (CKM)
-    c_km_ars = (opex.gasoil_ars_l * opex.consumo_l_km) + opex.neumaticos_km_ars + opex.mantenimiento_km_ars
-
-    # 2. Costo por Hora (CH)
-    c_lab = (personal.sueldo_basico_ars * personal.cargas_sociales_factor) + \
-            personal.bono_mensual_ars + \
-            (personal.viatico_dia_ars * 22) + \
-            personal.provision_sac_vacaciones_ars
-    ch_lab = c_lab / personal.jornada_mensual_hs
-
-    c_amort = (capex.valor_unidad_ars * (1 - capex.valor_recupero_pct)) / capex.vida_util_meses
-    ch_est = (c_amort + capex.seguros_patentes_mes_ars + capex.telemetria_mes_ars) / personal.jornada_mensual_hs
-    c_hora_ars = ch_lab + ch_est
+    # Costo por km y por hora: misma cuenta que usa /health (src/config/settings.py)
+    c_km_ars = costo_por_km(cost_env)
+    c_hora_ars = costo_por_hora(cost_env)
 
     # 3. Auxiliares
     peaje_promedio_ars = getattr(cost_env, 'peaje_promedio_ars', 1200.0)

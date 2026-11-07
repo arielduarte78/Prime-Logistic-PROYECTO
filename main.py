@@ -38,7 +38,7 @@ from src.bloque4.rx_adapter import build_legacy_graph, get_rx_idx_for_osm
 from src.bloque4.multiobjective_engine import MultiObjectiveEngine
 from src.bloque4.pareto import ParetoFrontResult
 import duckdb
-from src.config.settings import load_cost_settings
+from src.config.settings import load_cost_settings, resolve_profile, costo_por_km, costo_por_hora
 from src.bloque3.threat_loader import load_h3_threat_matrix
 from src.bloque3.integrity_chain import IntegrityChain
 from src.api.security import rate_limit_route, rate_limit_fleet, verify_api_key
@@ -399,8 +399,8 @@ async def calculate_route(
         origin_osm = get_nearest_node_osm_id(v.origin_lat, v.origin_lon)
         dest_osm = get_nearest_node_osm_id(d.lat, d.lon)
 
-        # 2. Perfil economico: el del cliente, o el por defecto (igual que /fleet)
-        client_cost_env = payload.economic_profile or EconomicProfile()
+        # 2. Perfil economico: YAML + lo que mande el cliente (igual que /fleet)
+        client_cost_env = resolve_profile(payload.economic_profile)
 
         # 3. Corredor H3 y Filtro Zero-Copy
         h3_corridor = set(build_h3_corridor(
@@ -568,12 +568,13 @@ async def calculate_route(
 @app.get("/health/")
 async def health():
     graph_ok = hasattr(app.state, "base_graph") and app.state.base_graph is not None
+    perfil = resolve_profile(None)
     return {
         "status": "ok" if graph_ok else "loading",
         "graph_nodes": len(app.state.rx_to_osm) if graph_ok else 0,
         "version": "Abbey 1.5",
-        "ckm_ars": 807.85,
-        "ch_ars": 19130.79
+        "ckm_ars": round(costo_por_km(perfil), 2),
+        "ch_ars": round(costo_por_hora(perfil), 2),
     }
 
 # ─────────────────────────────────────────────────────────

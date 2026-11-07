@@ -737,13 +737,9 @@ async def calculate_fleet(payload: FleetRequest, request: Any) -> FleetResponse:
     else:
         judge = request.app.state.judge
 
-    # ─── INYECCIÓN CFO DIRECTA ───
-    if payload.economic_profile:
-        client_cost_env = payload.economic_profile
-    else:
-        from src.api.schemas import EconomicProfile
-        client_cost_env = EconomicProfile()
-    
+    # ─── Perfil económico: YAML + lo que mande el cliente ───
+    from src.config.settings import resolve_profile
+    client_cost_env = resolve_profile(payload.economic_profile)
 
     from src.block5.cost_matrix_builder import build_time_matrix_only
     shared_time_matrix = build_time_matrix_only(
