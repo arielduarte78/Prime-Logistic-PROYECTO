@@ -40,7 +40,7 @@ Por eso:
 - Frontend (`fleetApi.js`): ante un 429 espera lo que dice `Retry-After`, avisa ("El motor está ocupado…") y reintenta 2 veces; corta a los 3 minutos con un mensaje claro.
 - Panel de costos: las líneas suman `costo_total_ars`; `exposure_risk_ars` se muestra aparte como "estimación en revisión" (`src/components/costLines.js`).
 - Tests del frontend: `cd prime-frontend && npm test` (runner de Node, sin dependencias nuevas).
-- **Ojo: hoy un push a `main` en GitHub despliega solo.** Vercel compila el frontend desde `main`, y el Space quedó corriendo el mismo commit sin correr `deploy_backend.sh` (observado el 10/11: `/health` devolvió `b10e68a`). Tratá cada push a `main` como un deploy a producción.
+- **Ojo: un push a `main` en GitHub despliega el frontend** (Vercel compila desde `main`, confirmado el 10/11). El Space no se sincroniza solo: el 10/11 pasó a `b10e68a` sin que Claude corriera `deploy_backend.sh` (origen desconocido, ¿deploy manual?), y el commit siguiente (solo docs) no se desplegó. El backend se despliega con `deploy_backend.sh`.
 - Verificación del 10/11 en producción (con la clave del frontend): `/route` 200 en ~1 s; `/fleet` del Excel de invitado 200 en ~30-40 s; dos `/fleet` a la vez → los dos 200 (el segundo espera su turno). Desde el navegador del entorno cloud de Claude los pedidos se cortan a los 30 s por el proxy del entorno (no pasa con curl ni sin proxy): no es un problema de producción.
 
 ## Pendientes
