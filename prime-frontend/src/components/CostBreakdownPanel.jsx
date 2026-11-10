@@ -1,15 +1,11 @@
 //prime-frontend/src/components/CostBreakdownPanel.jsx
 import React from 'react';
+import { buildCostLines } from './costLines';
 
 const CostBreakdownPanel = ({ breakdown }) => {
   if (!breakdown) return null;
 
-  const items = [
-    { label: 'Gastos de Desplazamiento', value: breakdown.opex_distance_ars || 0, detail: 'Combustible, Neumáticos, Mantenimiento', icon: '⛽' },
-    { label: 'Personal y Estructura', value: (breakdown.opex_time_ars || 0) + (breakdown.capex_amortization_ars || 0), detail: 'CCT 40/89, CAPEX, Seguros, Telemetría', icon: '👷' },
-    { label: 'Gastos Fijos de la Operación', value: breakdown.fixed_costs_ars || 0, detail: 'Peajes, Viáticos, Varios', icon: '🛣️' },
-    { label: 'Riesgo Patrimonial y Custodia', value: (breakdown.exposure_risk_ars || 0) + (breakdown.custodia_ars || 0), detail: 'Seguro, Custodia, Exposición', icon: '🛡️' },
-  ];
+  const { items, total, exposure } = buildCostLines(breakdown);
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 mt-4 text-sm shadow-2xl overflow-hidden relative group">
@@ -45,7 +41,7 @@ const CostBreakdownPanel = ({ breakdown }) => {
         <div>
           <div className="text-slate-500 text-[10px] mb-1 font-bold uppercase tracking-widest">Costo Servido Total</div>
           <div className="text-2xl font-black text-white flex items-baseline gap-2 tabular-nums">
-            ${breakdown.costo_total_ars.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            ${total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
             <span className="text-xs font-bold text-slate-500 tracking-widest uppercase">ARS</span>
           </div>
         </div>
@@ -54,6 +50,18 @@ const CostBreakdownPanel = ({ breakdown }) => {
           <div className="text-[9px] text-slate-600 font-black uppercase tracking-widest">MEP REF: ${breakdown.dolar_mep || '1.415'}</div>
         </div>
       </div>
+
+      {exposure.value > 0 && (
+        <div className="mt-3 p-2 rounded-lg border border-amber-500/30 bg-amber-500/5 flex justify-between items-center">
+          <div className="flex flex-col">
+            <span className="text-amber-300 font-bold">Riesgo patrimonial (no incluido en el total)</span>
+            <span className="text-amber-500/80 text-[10px] uppercase font-bold tracking-tight">{exposure.nota}</span>
+          </div>
+          <div className="text-amber-200 font-mono font-bold tabular-nums">
+            ${exposure.value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 text-[10px] text-slate-500 italic flex items-center gap-1.5">
         <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>
