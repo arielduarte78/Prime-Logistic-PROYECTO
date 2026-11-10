@@ -110,8 +110,9 @@ def mock_app_state():
 
     # Importante: Mockear semáforos asíncronos para VRP Orchestrator
     import asyncio
-    app.state.semaphore = asyncio.Semaphore(10)
-    app.state.fleet_semaphore = asyncio.Semaphore(10)
+    from src.api.cola import Cola
+    app.state.cola_route = Cola(en_paralelo=10, max_en_espera=10, espera_max_s=5)
+    app.state.cola_fleet = Cola(en_paralelo=10, max_en_espera=10, espera_max_s=5)
 
     yield app.state
 

@@ -41,6 +41,7 @@ import duckdb
 from src.config.settings import load_cost_settings, resolve_profile, costo_por_km, costo_por_hora
 from src.bloque3.threat_loader import load_h3_threat_matrix
 from src.bloque3.integrity_chain import IntegrityChain
+from src.api.cola import Cola
 from src.api.security import rate_limit_route, rate_limit_fleet, verify_api_key
 from src.api.identity import (
     configure_identity, sanitize_secrets, get_current_identity,
@@ -62,9 +63,11 @@ AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Instanciar el semaforo DENTRO del loop de eventos activo
-    app.state.semaphore = asyncio.Semaphore(3)
-    app.state.fleet_semaphore = asyncio.Semaphore(1)
+    # 1. Colas de espera (dentro del loop de eventos activo).
+    #    /fleet: 1 cálculo a la vez (en el CPU gratis un /fleet de 2 camiones y 4 destinos tarda ~30 s),
+    #    hasta 3 esperando y como mucho 90 s de espera. /route es liviano (~1 s): 3 a la vez.
+    app.state.cola_fleet = Cola(en_paralelo=1, max_en_espera=3, espera_max_s=90)
+    app.state.cola_route = Cola(en_paralelo=3, max_en_espera=10, espera_max_s=30)
     
     import time
     t0 = time.time()
@@ -319,18 +322,15 @@ async def fleet_endpoint(
     background_tasks: BackgroundTasks,
     identity: TokenPayload = Depends(require_role("operator", "admin")),
 ):
-    semaphore = request.app.state.fleet_semaphore
+    # Espera su turno en la cola (en vez de rebotar al instante). El turno se libera siempre.
+    async with request.app.state.cola_fleet.turno():
+        return await _procesar_fleet(payload, request, background_tasks, identity)
+
+
+async def _procesar_fleet(payload, request, background_tasks, identity):
     try:
-        await asyncio.wait_for(semaphore.acquire(), timeout=0.1)
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=429, detail="Server overloaded. At capacity.")
-        
-    try:
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: calculate_fleet(payload, request)
-        )
-        if asyncio.iscoroutine(result):
-            result = await result
+        # calculate_fleet es async: las partes pesadas por arquetipo corren en hilos adentro.
+        result = await calculate_fleet(payload, request)
         
         # ─── CISO Directive: Propagar flag de integridad al cliente ───
         judge = request.app.state.judge_premium if (
@@ -360,8 +360,6 @@ async def fleet_endpoint(
     except Exception as e:
         logger.error(f"[ERROR] Excepción no controlada en /fleet: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Error procesando la solicitud: {str(e)}")
-    finally:
-        semaphore.release()
 
 @app.post('/route', response_model=RouteResponse, response_class=ORJSONResponse)
 @app.post('/route/', response_model=RouteResponse, response_class=ORJSONResponse)
@@ -372,14 +370,12 @@ async def calculate_route(
     background_tasks: BackgroundTasks,
     identity: TokenPayload = Depends(require_role("operator", "admin")),
 ):
-    # Obtener el semaforo vivo del estado de la aplicacion
-    semaphore = request.app.state.semaphore
-    
-    try:
-        await asyncio.wait_for(semaphore.acquire(), timeout=0.1)
-    except asyncio.TimeoutError:
-        raise HTTPException(status_code=429, detail="Server overloaded. At capacity of 3 concurrent requests.")
-        
+    # Espera su turno en la cola (en vez de rebotar al instante). El turno se libera siempre.
+    async with request.app.state.cola_route.turno():
+        return await _procesar_route(payload, request, background_tasks, identity)
+
+
+async def _procesar_route(payload, request, background_tasks, identity):
     try:
         start_time = time.time()
         
@@ -556,13 +552,6 @@ async def calculate_route(
     except Exception as e:
         logger.error(f"[ERROR] Excepción no controlada en /route: {e}", exc_info=True)
         raise HTTPException(status_code=422, detail=f"Error procesando la solicitud: {str(e)}")
-    finally:
-        try:
-            del legacy_graph, frontier_labels, node_coords
-            gc.collect()
-        except NameError:
-            pass
-        semaphore.release()
 
 def _leer_commit(raiz: Path = Path(__file__).resolve().parent) -> str:
     """Hash del commit que está corriendo: variable GIT_COMMIT, o se lee de la carpeta .git (sin usar el comando git)."""
