@@ -19,6 +19,7 @@ export default function AppPage() {
     const [parsedPayload, setParsedPayload] = useState(null);
     const [loadingStart, setLoadingStart] = useState(null);
     const [advConfig, setAdvConfig] = useState(null);
+    const [loadingStatus, setLoadingStatus] = useState(null);
 
     const handleParsed = async (payload) => {
         const [h, m] = (advConfig?.departure_time || "08:00").split(':').map(Number);
@@ -36,9 +37,10 @@ export default function AppPage() {
         setParsedPayload(finalPayload);
         setAppState('loading');
         setLoadingStart(Date.now());
+        setLoadingStatus(null);
 
         try {
-            const response = await sendFleetRequest(finalPayload);
+            const response = await sendFleetRequest(finalPayload, { onStatus: setLoadingStatus });
             setFleetResponse(response);
             setAppState('result');
 
@@ -130,7 +132,7 @@ export default function AppPage() {
                     </div>
                 </div>
             )}
-            {appState === 'loading' && <LoadingState startTime={loadingStart} />}
+            {appState === 'loading' && <LoadingState startTime={loadingStart} status={loadingStatus} />}
             {appState === 'result' && (
                 <ChatResult
                     fleetResponse={fleetResponse}
