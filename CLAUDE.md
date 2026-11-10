@@ -35,7 +35,14 @@ Por eso:
 - Deploy del backend: `./deploy_backend.sh` (Linux/macOS, lo usa Claude) o `deploy_backend.ps1` (Windows). Sin `--force`, no tocan Vercel, verifican `/health` hasta que `commit` sea el HEAD de `main`. El token de Hugging Face va SIEMPRE por la variable de entorno `HF_TOKEN` (con `GIT_ASKPASS`): nunca en la URL del remote, en `.git/config` ni en archivos. Rollback: `ROLLBACK=1 HF_TOKEN=... ./deploy_backend.sh` (único caso con `--force`). `deploy.ps1` está DEPRECADO, no usar. Space: https://huggingface.co/spaces/Aphira/Abbey (app: https://aphira-abbey.hf.space). Commit anterior al primer deploy: `a3ba522`.
 - Secrets del Space: solo `PRIME_API_KEYS`.
 
+## Decisiones tomadas (10/11/2026)
+- Cola en vez de rebote: `src/api/cola.py`. `/fleet`: 1 cálculo a la vez, hasta 3 esperando, máximo 90 s de espera. `/route`: 3 a la vez, hasta 10 esperando, 30 s. Si rebota: 429 con mensaje claro y `Retry-After: 30`. El turno se libera siempre.
+- Frontend (`fleetApi.js`): ante un 429 espera lo que dice `Retry-After`, avisa ("El motor está ocupado…") y reintenta 2 veces; corta a los 3 minutos con un mensaje claro.
+- Panel de costos: las líneas suman `costo_total_ars`; `exposure_risk_ars` se muestra aparte como "estimación en revisión" (`src/components/costLines.js`).
+- Tests del frontend: `cd prime-frontend && npm test` (runner de Node, sin dependencias nuevas).
+
 ## Pendientes
+- **Velocidad de `/fleet`** (medido en producción: ~29 s para 2 camiones, 4 destinos y 3 arquetipos; ~5 s con 1 camión, 3 destinos y 1 arquetipo). El tiempo se va en (a) el Pareto por tramo: los 3 hilos de arquetipos calculan los MISMOS tramos a la vez; y (b) la matriz de costos: un Dijkstra por punto sobre el mapa entero (528 mil aristas) con una función de Python por arista. Los hilos no corren en paralelo de verdad (GIL). Opciones: calcular cada tramo una sola vez para los 3 arquetipos; correr la matriz sobre el subgrafo de la zona (medido: la mitad de tiempo en esa etapa); que el invitado calcule 1 arquetipo (medido: 26 s → 10 s); hardware pago no ayuda mucho por el GIL.
 - **Rehacer `exposure_risk_ars` en la etapa de datos reales.** Hoy es un 1% fijo de la franquicia (`0.01 * franquicia_usd * dólar`) que no usa el modelo de riesgo.
 - Frontend: `CostBreakdownPanel.jsx` suma `exposure_risk_ars` en la línea "Riesgo Patrimonial y Custodia", pero el total ya no lo incluye (las líneas no suman el total). `fleetApi.js` sigue con API key de respaldo hardcodeada.
 - Juez bayesiano y riesgo: la caché de costos usa una huella de α/β (`BayesianJudge.huella()`); el modelo de riesgo y `threat_index.json` siguen sin revisar.
