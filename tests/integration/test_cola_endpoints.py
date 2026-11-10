@@ -46,3 +46,11 @@ def test_cola_llena_responde_429_claro_con_retry_after(mock_app_state, monkeypat
     rebote = r1 if r1.status_code == 429 else r2
     assert rebote.headers.get("retry-after") == "30"
     assert "ocupado" in rebote.json()["detail"].lower()
+
+
+def test_cors_deja_leer_retry_after_al_frontend(test_client):
+    """Sin Access-Control-Expose-Headers el navegador no puede leer Retry-After desde Vercel."""
+    r = test_client.post("/fleet", json=BODY, headers={
+        "x-api-key": "clave-mala", "Origin": "https://abbey-frontend-rho.vercel.app"})
+    expuestos = r.headers.get("access-control-expose-headers", "").lower()
+    assert "retry-after" in expuestos

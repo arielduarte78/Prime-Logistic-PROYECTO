@@ -237,6 +237,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["POST", "GET", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key"],
+    expose_headers=["Retry-After"],  # para que el frontend sepa cuánto esperar si el motor está ocupado
 )
 
 # Guard: coordenadas fuera del bounding box AMBA
