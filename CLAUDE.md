@@ -40,7 +40,7 @@ Por eso:
 - Frontend (`fleetApi.js`): ante un 429 espera lo que dice `Retry-After`, avisa ("El motor está ocupado…") y reintenta 2 veces; corta a los 3 minutos con un mensaje claro.
 - Panel de costos: las líneas suman `costo_total_ars`; `exposure_risk_ars` se muestra aparte como "estimación en revisión" (`src/components/costLines.js`).
 - Tests del frontend: `cd prime-frontend && npm test` (runner de Node, sin dependencias nuevas).
-- **Ojo: un push a `main` en GitHub despliega el frontend** (Vercel compila desde `main`, confirmado el 10/11). El Space no se sincroniza solo: el 10/11 pasó a `b10e68a` sin que Claude corriera `deploy_backend.sh` (origen desconocido, ¿deploy manual?), y el commit siguiente (solo docs) no se desplegó. El backend se despliega con `deploy_backend.sh`.
+- **Ojo: un push a `main` en GitHub despliega el frontend** (Vercel compila desde `main`, confirmado el 10/11). El Space no se sincroniza solo: el 10/11 pasó a `b10e68a` porque una sesión local de Claude Code (en la PC del autor) corrió `deploy_backend.ps1`, y el commit siguiente (solo docs) no se desplegó. El backend se despliega con `deploy_backend.sh`.
 - Verificación del 10/11 en producción (con la clave del frontend): `/route` 200 en ~1 s; `/fleet` del Excel de invitado 200 en ~30-40 s; dos `/fleet` a la vez → los dos 200 (el segundo espera su turno). Desde el navegador del entorno cloud de Claude los pedidos se cortan a los 30 s por el proxy del entorno (no pasa con curl ni sin proxy): no es un problema de producción.
 
 ## Pendientes
@@ -57,3 +57,32 @@ Por eso:
 - Corré los tests (`pytest`) antes y después de cada cambio.
 - Commits chicos con mensajes descriptivos en español (no "messi").
 - Nunca subas secretos; si aparece uno, avisá.
+
+## Accesos y operación
+Qué herramienta controla qué (todas se usan por terminal; los logins los hace el autor en su PC):
+
+| Servicio | Herramienta | Para qué | Dónde está la credencial |
+|---|---|---|---|
+| Código (GitHub `arielduarte78/Prime-Logistic-PROYECTO`) | `git`, `gh` | commits, push, PRs, CI | Windows Credential Manager (`gh auth login` y git lo guardan ahí) |
+| Frontend (Vercel, proyecto `abbey-frontend`, raíz `prime-frontend`) | `vercel` | deploys, variables, rollback | `vercel login` → archivo de sesión del CLI en el perfil del usuario. Proyecto vinculado en `.vercel/` (ignorado por git) |
+| Backend (Hugging Face Space `Aphira/Abbey`) | `hf`, `git push hf main` | logs de ejecución y de build, estado, deploy | `hf auth login` → token en `~/.cache/huggingface/` y credencial de git |
+| Auth y base (Supabase, la que usa el frontend) | `npx -y supabase` (no hay instalador en winget) | proyectos, migraciones | `supabase login` en el navegador; la URL y la anon key del frontend están en las variables `VITE_SUPABASE_*` de Vercel |
+
+- Variables de entorno de producción del frontend (solo nombres): `VITE_API_URL`, `VITE_API_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, en Vercel (Production/Preview/Development). Ninguna va en el repo.
+- El backend NO se sincroniza solo con GitHub: se despliega con `deploy_backend.ps1`. El frontend SÍ: cada push a `main` despliega en Vercel.
+- Permisos de Claude Code: `.claude/settings.local.json` (no se sube a git). Pide confirmación para `git push --force`, borrar archivos, cambiar secretos/variables en producción y cualquier cambio en la base de Supabase.
+- Nunca pegar tokens en el chat ni en archivos del repo.
+
+### Comandos propios (en `.claude/skills/`)
+- `/estado`: solo lectura. Salud de producción, commit desplegado en el backend y el frontend, y errores recientes en los logs.
+- `/deploy`: tests de backend y frontend → commit si hace falta → push a GitHub → `deploy_backend.ps1` → espera a Vercel → verifica que `/health` y Vercel sirvan el mismo commit → prueba del flujo invitado → resumen.
+- `/rollback`: vuelve backend y frontend al último deploy estable, con confirmación en cada paso. Ojo: no cambia `main` en GitHub.
+
+### Mantener los servicios gratis despiertos
+- `.github/workflows/mantener-activo.yml`: una vez por día (12:17 UTC) y a mano (`gh workflow run mantener-activo.yml`) hace dos pings: (1) una consulta liviana a Supabase (`GET /rest/v1/consultas?select=id&limit=1`) porque el plan gratis pausa el proyecto tras ~7 días sin actividad, y (2) `GET /health` del Space, que se duerme tras 48 h sin tráfico. Si algún ping falla, el workflow queda en rojo y GitHub avisa por mail.
+- Secretos de GitHub Actions (solo nombres): `SUPABASE_URL`, `SUPABASE_ANON_KEY`. Se cargan con `gh secret set` en la terminal del autor.
+- Límite: GitHub desactiva los workflows programados de un repo público tras 60 días sin commits. Si pasa, se reactiva a mano desde la pestaña Actions.
+- Si la tabla `consultas` cambia de nombre, hay que actualizar el ping.
+- `supabase/` (lo crea `supabase link`) está en `.gitignore`: solo tiene archivos temporales. Si algún día se versionan migraciones, sacarlo del `.gitignore`.
+
+Detalles de máquina (Windows): los tests del backend se corren con `uv run --frozen --python 3.14 --with pytest python -m pytest` (no hay Python 3.14 en el PATH global). `npm test` no encuentra los archivos en Windows por las comillas; usar `node --test <archivos>`.

@@ -1,0 +1,45 @@
+# Mantiene despiertos los servicios gratis de Abbey con un pedido liviano por día:
+#  - Supabase (plan gratis) se pausa tras ~7 días sin actividad.
+#  - El Space de Hugging Face (cpu-basic) se duerme tras 48 h sin tráfico.
+# Si un ping falla, el workflow queda en rojo y GitHub te avisa por mail.
+# Secretos (Settings > Secrets > Actions): SUPABASE_URL y SUPABASE_ANON_KEY.
+name: Mantener servicios activos
+
+on:
+  schedule:
+    - cron: "17 12 * * *"   # todos los días 12:17 UTC (09:17 en Argentina)
+  workflow_dispatch:         # también se puede correr a mano
+
+permissions: {}              # no necesita tocar el repo
+
+jobs:
+  supabase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Consulta liviana a Supabase (lee 1 fila de "consultas")
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "Faltan los secretos SUPABASE_URL y/o SUPABASE_ANON_KEY"; exit 1
+          fi
+          curl --silent --show-error --fail --max-time 30 \
+            --retry 3 --retry-delay 10 --retry-all-errors \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            "${SUPABASE_URL%/}/rest/v1/consultas?select=id&limit=1" \
+            -o /dev/null -w "Supabase respondió HTTP %{http_code}\n"
+
+  space-huggingface:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Ping a /health del Space (lo despierta si estaba dormido)
+        run: |
+          # Si estaba dormido tarda en arrancar: hasta 5 intentos, 30 s entre uno y otro.
+          curl --silent --show-error --fail --max-time 120 \
+            --retry 5 --retry-delay 30 --retry-all-errors \
+            https://aphira-abbey.hf.space/health | tee health.json
+          echo
+          grep -q '"status":"ok"' health.json
